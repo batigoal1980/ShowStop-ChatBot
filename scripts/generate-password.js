@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 
 async function generatePasswordHash() {
-  const password = 'password123';
+  const password = 'showstop2025';
   const saltRounds = 10;
   
   try {

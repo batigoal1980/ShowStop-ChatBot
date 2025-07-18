@@ -20,8 +20,8 @@ async function testServer() {
     // Test 3: Login endpoint
     console.log('\n3️⃣ Testing login endpoint...');
     const loginResponse = await axios.post(`${baseURL}/api/auth/login`, {
-      email: 'admin@showstop.com',
-      password: 'password123'
+      email: 'admin',
+      password: 'showstop2025'
     });
     console.log('✅ Login test passed:', {
       success: loginResponse.data.success,
@@ -33,7 +33,7 @@ async function testServer() {
     console.log('\n📝 You can now:');
     console.log('   - Start the frontend: npm run client');
     console.log('   - Access the app at: http://localhost:3000');
-    console.log('   - Login with: admin@showstop.com / password123');
+    console.log('   - Login with: admin / showstop2025');
     
   } catch (error) {
     console.error('\n❌ Test failed:', error.message);

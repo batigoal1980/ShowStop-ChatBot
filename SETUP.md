@@ -46,7 +46,7 @@ npm run dev
 ### Step 5: Access the App
 - **URL**: http://localhost:3000
 - **Backend**: http://localhost:5001
-- **Login**: admin@showstop.com / password123
+- **Login**: admin / showstop2025
 
 ## ✅ What's Already Configured
 

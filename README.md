@@ -73,7 +73,7 @@ A powerful AI-driven chatbot for marketing analytics that connects with Meta Ads
 6. **Access the Application**
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:5001
-   - Login: admin@showstop.com / password123
+   - Login: admin / showstop2025
 
 ## 🔧 Configuration
 

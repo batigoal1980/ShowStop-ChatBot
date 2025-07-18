@@ -92,7 +92,7 @@ async function setupDatabase() {
     console.log('   1. Make sure you have an OpenAI API key in your .env file');
     console.log('   2. Run "npm run dev" to start the application');
     console.log('   3. Access the app at http://localhost:3000');
-    console.log('   4. Login with: admin@showstop.com / password123');
+    console.log('   4. Login with: admin / showstop2025');
     
   } catch (error) {
     console.error('❌ Database connection failed:', error.message);

@@ -45,7 +45,7 @@ node scripts/setup-database.js
 echo "🎯 Starting ShowStop ChatBot..."
 echo "   Frontend: http://localhost:3000"
 echo "   Backend:  http://localhost:5000"
-echo "   Login:    admin@showstop.com / password123"
+echo "   Login:    admin / showstop2025"
 echo ""
 echo "Press Ctrl+C to stop the application"
 echo "================================"

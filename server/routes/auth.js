@@ -7,8 +7,8 @@ const bcrypt = require('bcryptjs');
 const users = [
   {
     id: 1,
-    email: 'admin@showstop.com',
-    password: '$2a$10$fZVl5AHvqLHvOV7BdjH.luUfGdxPdEXBuxPFohRQCh6JA4NC1WQGu', // password123
+    email: 'admin',
+    password: '$2a$10$oYE/drxGOpzjSCZLMOOC2OTliYII8WCDbS9KEKLP8ZoN.sVu/RzfO', // showstop2025
     name: 'Admin User',
     role: 'admin'
   }
