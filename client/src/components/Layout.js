@@ -20,9 +20,7 @@ const Layout = ({ children }) => {
   const location = useLocation();
 
   const navigation = [
-    { name: 'Dashboard', href: '/', icon: Home },
     { name: 'Chat', href: '/chat', icon: MessageSquare },
-    { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   ];
 
   const isActive = (path) => location.pathname === path;

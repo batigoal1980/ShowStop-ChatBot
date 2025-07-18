@@ -34,13 +34,7 @@ function AppContent() {
         <Routes>
           <Route path="/login" element={<Login />} />
           
-          <Route path="/" element={
-            <ProtectedRoute>
-              <Layout>
-                <Dashboard />
-              </Layout>
-            </ProtectedRoute>
-          } />
+          <Route path="/" element={<Navigate to="/chat" replace />} />
           
           <Route path="/chat" element={
             <ProtectedRoute>
@@ -50,15 +44,7 @@ function AppContent() {
             </ProtectedRoute>
           } />
           
-          <Route path="/analytics" element={
-            <ProtectedRoute>
-              <Layout>
-                <Analytics />
-              </Layout>
-            </ProtectedRoute>
-          } />
-          
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </div>
     </Router>

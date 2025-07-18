@@ -30,7 +30,7 @@ const Login = () => {
             <Bot className="h-8 w-8 text-white" />
           </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Welcome to ShowStop
+            Welcome to ShowStop Chat
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
             Sign in to access your marketing analytics dashboard
@@ -46,8 +46,8 @@ const Login = () => {
               <input
                 id="email"
                 name="email"
-                type="email"
-                autoComplete="email"
+                type="text"
+                autoComplete="username"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

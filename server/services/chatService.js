@@ -155,17 +155,17 @@ ${schemaText}
 
 STEP-BY-STEP QUERY GENERATION PROCESS:
 
-1. **ANALYZE the user question** to identify:
+1. **MANDATORY: SCAN TABLE SCHEMAS FIRST** - Before writing ANY SQL, you MUST:
+   - Look at the exact column names in each table above
+   - Verify which columns exist and their exact spelling (case-sensitive)
+   - Check data types and constraints
+   - Identify primary keys and foreign keys for joins
+   - Which table contains the required columns (e.g., f_ad_type is in t_ad_image_labelings, not t_ad)
+
+2. **ANALYZE the user question** to identify:
    - What data is being requested (spend, performance, creative features, etc.)
    - What time period (this week, last week, this month, etc.)
    - What comparison or analysis is needed
-
-2. **SCAN TABLE SCHEMAS FIRST**: Before writing any SQL, always examine the schema of each relevant table to understand:
-   - Available column names (exact spelling and case)
-   - Data types of columns
-   - Primary keys and foreign keys for joins
-   - Date/time columns for filtering
-   - Which table contains the required columns (e.g., f_ad_type is in t_ad_image_labelings, not t_ad)
 
 3. **CHOOSE the correct table(s)** based on the schema scan and the data type:
    - Performance data (spend, impressions, clicks): t_ad_campaign_daily_performance
@@ -176,10 +176,10 @@ STEP-BY-STEP QUERY GENERATION PROCESS:
    - Video creative features: t_ad_video_labelings (cf_xxx columns)
 
 4. **PLAN COLUMN SELECTION**: Based on the schema scan, identify:
-   - Which columns to SELECT
-   - Which columns to use in WHERE clauses
-   - Which columns to use for JOINs
-   - Which columns to use for GROUP BY, ORDER BY
+   - Which columns to SELECT (verify they exist in schema)
+   - Which columns to use in WHERE clauses (verify they exist in schema)
+   - Which columns to use for JOINs (verify they exist in schema)
+   - Which columns to use for GROUP BY, ORDER BY (verify they exist in schema)
 
 5. **APPLY proper date filtering**:
    - Last week: WHERE date >= CURRENT_DATE - INTERVAL '7 days' AND date < CURRENT_DATE
@@ -192,9 +192,10 @@ STEP-BY-STEP QUERY GENERATION PROCESS:
    - AVG() for averages
    - COUNT() for counts
    - COALESCE() to handle NULL values
+   - ROUND(value::numeric, 2) for rounding (use ::numeric cast)
 
 7. **VALIDATE QUERY**: Ensure the query:
-   - Only uses columns that exist in the scanned schema
+   - Only uses columns that exist in the scanned schema (VERIFY EACH COLUMN)
    - Has proper syntax (no semicolons before LIMIT, ORDER BY, etc.)
    - Includes LIMIT 100 unless specified otherwise
    - Uses COALESCE() for NULL values when appropriate
@@ -204,7 +205,10 @@ CRITICAL TABLE USAGE RULES:
 2. For campaign metadata (name, status, platform): Use t_ad_campaign table
 3. For ad-level performance: Use t_ad_daily_performance directly
 4. For account-level performance: Use t_ad_account_daily_performance directly
-5. For ad format analysis: Use t_ad_image_labelings.f_ad_type to compare different ad formats (NOT t_ad.f_ad_type)
+5. For ad format analysis: 
+   - Image formats: Use t_ad_image_labelings.f_ad_type
+   - Video formats: Use t_ad_video_labelings.video_ad_type
+   - Combined: Use both tables with LEFT JOINs
 6. For image creative features: JOIN t_ad (asset_id) with t_ad_image_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id). Use f_xxx columns from t_ad_image_labelings.
 7. For video creative features: JOIN t_ad (asset_id) with t_ad_video_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id). Use cf_xxx columns from t_ad_video_labelings.
 
@@ -213,6 +217,9 @@ QUERY PATTERNS:
 - Campaign info + performance: JOIN t_ad_campaign ON raw_campaign_id
 - Image creative analysis: JOIN t_ad (asset_id) with t_ad_image_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id)
 - Video creative analysis: JOIN t_ad (asset_id) with t_ad_video_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id)
+- Image ad format analysis: Use t_ad_image_labelings.f_ad_type
+- Video ad format analysis: Use t_ad_video_labelings.video_ad_type
+- Combined ad format analysis: Use LEFT JOINs with both tables and COALESCE
 - DO NOT filter by campaign status unless explicitly requested
 - Most campaigns are 'paused' - only filter by 'active' if specifically asked
 
@@ -222,14 +229,62 @@ JOIN RELATIONSHIPS:
 - t_ad.asset_id = t_ad_video_labelings.raw_asset_id (for video creative features)
 - t_ad.raw_ad_id = t_ad_daily_performance.raw_ad_id (for ad performance data)
 
-QUERY PATTERNS:
-- Performance queries: SELECT FROM t_ad_campaign_daily_performance WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
-- Campaign info + performance: JOIN t_ad_campaign ON raw_campaign_id
-- Ad format analysis: Use t_ad_image_labelings.f_ad_type for comparing different ad formats (NOT t_ad.f_ad_type)
-- Image creative analysis: JOIN t_ad (asset_id) with t_ad_image_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id)
-- Video creative analysis: JOIN t_ad (asset_id) with t_ad_video_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id)
-- DO NOT filter by campaign status unless explicitly requested
-- Most campaigns are 'paused' - only filter by 'active' if specifically asked
+**AD FORMAT COMPARISON EXAMPLES:**
+
+**IMAGE AD FORMATS:**
+SELECT 
+    il.f_ad_type,
+    SUM(dp.spend) as total_spend,
+    SUM(dp.impressions) as total_impressions,
+    SUM(dp.clicks) as total_clicks,
+    ROUND((SUM(dp.clicks)::float / NULLIF(SUM(dp.impressions), 0) * 100)::numeric, 2) as ctr
+FROM t_ad_image_labelings il
+JOIN t_ad a ON il.raw_asset_id = a.asset_id
+JOIN t_ad_daily_performance dp ON a.raw_ad_id = dp.raw_ad_id
+WHERE dp.date >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY il.f_ad_type
+ORDER BY total_spend DESC
+LIMIT 100
+
+**VIDEO AD FORMATS:**
+SELECT 
+    vl.video_ad_type,
+    SUM(dp.spend) as total_spend,
+    SUM(dp.impressions) as total_impressions,
+    SUM(dp.clicks) as total_clicks,
+    ROUND((SUM(dp.clicks)::float / NULLIF(SUM(dp.impressions), 0) * 100)::numeric, 2) as ctr
+FROM t_ad_video_labelings vl
+JOIN t_ad a ON vl.raw_asset_id = a.asset_id
+JOIN t_ad_daily_performance dp ON a.raw_ad_id = dp.raw_ad_id
+WHERE dp.date >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY vl.video_ad_type
+ORDER BY total_spend DESC
+LIMIT 100
+
+**COMBINED AD FORMATS (IMAGE + VIDEO):**
+SELECT 
+    COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
+    CASE 
+        WHEN il.f_ad_type IS NOT NULL THEN 'Image'
+        WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
+    END as media_type,
+    SUM(dp.spend) as total_spend,
+    SUM(dp.impressions) as total_impressions,
+    SUM(dp.clicks) as total_clicks,
+    ROUND((SUM(dp.clicks)::float / NULLIF(SUM(dp.impressions), 0) * 100)::numeric, 2) as ctr
+FROM t_ad a
+LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
+LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+JOIN t_ad_daily_performance dp ON a.raw_ad_id = dp.raw_ad_id
+WHERE dp.date >= CURRENT_DATE - INTERVAL '30 days'
+    AND (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
+GROUP BY COALESCE(il.f_ad_type, vl.video_ad_type), 
+         CASE 
+             WHEN il.f_ad_type IS NOT NULL THEN 'Image'
+             WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
+         END
+ORDER BY total_spend DESC
+LIMIT 100
 
 IMPORTANT RULES:
 1. **ALWAYS SCAN SCHEMA FIRST** - Check which columns exist in which tables before writing queries
@@ -245,6 +300,20 @@ IMPORTANT RULES:
 11. Image creative features: Use f_xxx columns from t_ad_image_labelings (e.g., f_bright_colors, f_dominant_color, f_ad_type)
 12. Video creative features: Use cf_xxx columns from t_ad_video_labelings (e.g., cf_bright_colors, cf_dominant_color)
 13. Ad format analysis: Use t_ad_image_labelings.f_ad_type for comparing different ad formats (NOT t_ad.f_ad_type)
+14. **CRITICAL POSTGRESQL SYNTAX RULES**:
+    - ALWAYS use ROUND(value::numeric, 2) for rounding (NEVER use ROUND(double, int))
+    - ALWAYS cast to ::numeric before using ROUND() function
+    - Use ::float for division operations
+    - Use ::numeric for decimal precision
+    - Use NULLIF(denominator, 0) to avoid division by zero
+    - AVOID CTEs (WITH clauses) - use simple SELECT statements
+    - Example: ROUND((SUM(spend)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2)
+
+**FINAL VERIFICATION:**
+Before returning the SQL, double-check that:
+1. Every column used exists in the schema above
+2. All ROUND() functions use ::numeric casting
+3. All division operations use proper type casting
 
 Return ONLY the SQL query, no explanations.`;
   }
