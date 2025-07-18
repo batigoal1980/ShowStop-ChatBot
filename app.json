@@ -1,0 +1,36 @@
+{
+  "name": "ShowStop ChatBot",
+  "description": "Marketing Data Analytics with AI-Powered SQL Translation",
+  "repository": "https://github.com/yourusername/ShowStop-ChatBot",
+  "logo": "https://node-js-sample.herokuapp.com/node.png",
+  "keywords": ["chatbot", "marketing", "analytics", "ai", "sql", "dashboard"],
+  "env": {
+    "NODE_ENV": {
+      "description": "Environment setting",
+      "value": "production"
+    },
+    "DATABASE_URL": {
+      "description": "PostgreSQL database URL",
+      "value": "postgresql://admin:gHzAsyen7HFpmc6b@34.74.141.9:58832/prod_ad_insights"
+    },
+    "ANTHROPIC_API_KEY": {
+      "description": "Anthropic API key for AI features",
+      "required": true
+    },
+    "JWT_SECRET": {
+      "description": "JWT secret for authentication",
+      "generator": "secret"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+} 
