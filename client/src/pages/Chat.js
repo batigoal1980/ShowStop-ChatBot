@@ -101,12 +101,6 @@ const Chat = () => {
     const questions = [];
     const messageLower = lastMessage.toLowerCase();
     
-    // Extract context from the conversation
-    const conversationContext = allMessages
-      .filter(msg => msg.type === 'user')
-      .map(msg => msg.content.toLowerCase())
-      .join(' ');
-    
     // Check if this is about videos
     if (messageLower.includes('video') || messageLower.includes('videos')) {
       questions.push(

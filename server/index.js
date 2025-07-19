@@ -101,10 +101,29 @@ app.use('*', (req, res) => {
 // Make pool available to routes
 app.locals.db = pool;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 ShowStop ChatBot server running on port ${PORT}`);
   console.log(`📊 Connected to database: prod_ad_insights`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 Health check available at: http://localhost:${PORT}/api/health`);
+  console.log(`📁 Static files served from: ${path.join(__dirname, '../client/build')}`);
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('❌ Server error:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 Received SIGTERM, shutting down gracefully');
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
 });
 
 module.exports = app; 
