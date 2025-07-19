@@ -304,7 +304,8 @@ ORDER BY total_spend DESC
 LIMIT 100
 
 **TOP PERFORMING VIDEOS (CORRECT PATTERN - NO DOUBLE COUNTING):**
-SELECT DISTINCT ON (a.raw_ad_id)
+-- Note: Use LIMIT 20 in subquery to get top 5 after JOIN (4x multiplier to account for ads without video labelings)
+SELECT DISTINCT
     a.raw_ad_id,
     a.name as ad_name,
     vl.url as video_url,
@@ -316,21 +317,23 @@ SELECT DISTINCT ON (a.raw_ad_id)
     ad_performance.purchase_value as total_revenue,
     ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas,
     ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
-FROM t_ad a
-JOIN (
+FROM (
     SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks, 
            SUM(purchases) as purchases, SUM(purchase_value) as purchase_value
     FROM t_ad_daily_performance 
     WHERE date >= '2025-07-01' AND date < '2025-08-01'
     GROUP BY raw_ad_id
-) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+    ORDER BY SUM(purchase_value) DESC
+    LIMIT 20
+) ad_performance
+JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
 JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-WHERE ad_performance.spend > 0
 ORDER BY ad_performance.purchase_value DESC, a.raw_ad_id
 LIMIT 5
 
 **TOP PERFORMING VIDEOS BY IMPRESSIONS (CORRECT ORDERING):**
-SELECT DISTINCT ON (a.raw_ad_id)
+-- Note: Use LIMIT 20 in subquery to get top 5 after JOIN (4x multiplier to account for ads without video labelings)
+SELECT DISTINCT
     a.raw_ad_id,
     a.name as ad_name,
     vl.url as video_url,
@@ -342,8 +345,7 @@ SELECT DISTINCT ON (a.raw_ad_id)
     ad_performance.purchases as total_purchases,
     ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr,
     ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas
-FROM t_ad a
-JOIN (
+FROM (
     SELECT raw_ad_id, 
            SUM(impressions) as impressions,
            SUM(spend) as spend,
@@ -353,11 +355,13 @@ JOIN (
     FROM t_ad_daily_performance
     WHERE date >= '2025-07-01' AND date < '2025-08-01'
     GROUP BY raw_ad_id
-) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+    ORDER BY SUM(impressions) DESC
+    LIMIT 20
+) ad_performance
+JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
 JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-WHERE ad_performance.impressions > 0
 ORDER BY ad_performance.impressions DESC, a.raw_ad_id
-LIMIT 10
+LIMIT 5
 
 IMPORTANT RULES:
 1. **ALWAYS SCAN SCHEMA FIRST** - Check which columns exist in which tables before writing queries
@@ -383,8 +387,9 @@ IMPORTANT RULES:
     - Use NULLIF(denominator, 0) to avoid division by zero
     - AVOID CTEs (WITH clauses) - use simple SELECT statements
     - Example: ROUND((SUM(spend)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2)
-    - **CRITICAL ORDERING RULE**: When using DISTINCT ON, order by the metric you want to rank by FIRST, then by the DISTINCT column
-    - Example: ORDER BY ad_performance.impressions DESC, a.raw_ad_id (NOT a.raw_ad_id, ad_performance.impressions DESC)
+    - **CRITICAL ORDERING RULE**: For ranking queries, use subquery to get top N ads first, then join with creative details to avoid duplicates
+    - **IMPORTANT**: When user asks for "top X", use LIMIT X*4 in subquery to account for ads without creative labelings
+    - Example: FROM (SELECT raw_ad_id, SUM(impressions) FROM t_ad_daily_performance GROUP BY raw_ad_id ORDER BY SUM(impressions) DESC LIMIT 20) ad_performance
 
 **FINAL VERIFICATION:**
 Before returning the SQL, double-check that:
