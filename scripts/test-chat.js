@@ -8,10 +8,10 @@ async function testChatService() {
     // Test 1: Database connection
     console.log('\n1️⃣ Testing database connection...');
     const schema = await ChatService.getDatabaseSchema();
-    console.log(`✅ Schema fetched: ${schema.length} columns found`);
+    console.log(`✅ Schema fetched: ${Object.keys(schema).length} tables found`);
     
     // Test 2: Show some table names
-    const tableNames = [...new Set(schema.map(col => col.table_name))];
+    const tableNames = Object.keys(schema);
     console.log('\n📊 Available tables:');
     tableNames.slice(0, 10).forEach(table => {
       console.log(`  - ${table}`);
@@ -19,7 +19,7 @@ async function testChatService() {
     
     // Test 3: Test SQL translation
     console.log('\n2️⃣ Testing SQL translation...');
-    const userQuestion = "What is the total spend across all campaigns?";
+    const userQuestion = process.argv[2] || "What is the total spend across all campaigns?";
     console.log(`Question: "${userQuestion}"`);
     
     const sqlQuery = await ChatService.translateToSQL(userQuestion);

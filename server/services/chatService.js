@@ -376,6 +376,60 @@ JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id AND vl.clip_sno = 1
 ORDER BY total_impressions DESC
 LIMIT 10
 
+**4. SIMPLE GROWTH TREND ANALYSIS (SINGLE SUBQUERY):**
+SELECT 
+    ad_format,
+    media_type,
+    month,
+    total_impressions,
+    prev_month_impressions,
+    ROUND(((total_impressions::float / NULLIF(prev_month_impressions, 0) - 1) * 100)::numeric, 2) as growth_rate
+FROM (
+    SELECT 
+        COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
+        CASE 
+            WHEN il.f_ad_type IS NOT NULL THEN 'Image'
+            WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
+        END as media_type,
+        DATE_TRUNC('month', adp.date) as month,
+        SUM(adp.impressions) as total_impressions,
+        LAG(SUM(adp.impressions)) OVER (PARTITION BY COALESCE(il.f_ad_type, vl.video_ad_type) ORDER BY DATE_TRUNC('month', adp.date)) as prev_month_impressions
+    FROM (
+        SELECT raw_ad_id, date, SUM(impressions) as impressions
+        FROM t_ad_daily_performance 
+        WHERE date >= '2025-01-01' AND date < '2026-01-01'
+        GROUP BY raw_ad_id, date
+    ) adp
+    JOIN t_ad a ON a.raw_ad_id = adp.raw_ad_id
+    LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
+    LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id AND vl.clip_sno = 1
+    WHERE il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL
+    GROUP BY DATE_TRUNC('month', adp.date), COALESCE(il.f_ad_type, vl.video_ad_type), 
+             CASE WHEN il.f_ad_type IS NOT NULL THEN 'Image' WHEN vl.video_ad_type IS NOT NULL THEN 'Video' END
+) monthly_data
+WHERE prev_month_impressions IS NOT NULL
+ORDER BY growth_rate DESC
+LIMIT 100
+
+**5. SIMPLE CTE EXAMPLE (SINGLE WITH CLAUSE ONLY):**
+WITH monthly_data AS (
+    SELECT 
+        DATE_TRUNC('month', date) as month,
+        SUM(impressions) as total_impressions
+    FROM t_ad_daily_performance 
+    WHERE date >= '2025-01-01' AND date < '2026-01-01'
+    GROUP BY DATE_TRUNC('month', date)
+)
+SELECT 
+    month,
+    total_impressions,
+    LAG(total_impressions) OVER (ORDER BY month) as prev_month_impressions
+FROM monthly_data
+ORDER BY month
+LIMIT 100
+
+
+
 **❌ WRONG PATTERNS (DO NOT USE):**
 -- 1. Direct GROUP BY on creative labelings tables (causes double counting)
 -- 2. ORDER BY calculated expressions in SELECT DISTINCT
@@ -405,7 +459,12 @@ IMPORTANT RULES:
     - Use ::float for division operations
     - Use ::numeric for decimal precision
     - Use NULLIF(denominator, 0) to avoid division by zero
-    - AVOID CTEs (WITH clauses) - use simple SELECT statements
+    - For complex queries, PREFER simple subqueries over CTEs to avoid syntax errors
+    - For trend analysis (growth/declining), use LAG() window function in a single subquery
+    - If CTEs are needed, ONLY use simple CTEs with a single WITH clause
+    - Simple CTE pattern: WITH cte_name AS (SELECT ...) SELECT ... FROM cte_name
+    - NEVER use multiple CTEs (WITH cte1 AS (...), cte2 AS (...)) - this causes syntax errors
+    - For growth rate calculations, use LAG() window function with proper NULLIF() to avoid division by zero
     - Example: ROUND((SUM(spend)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2)
     - **SELECT DISTINCT RULE**: When using SELECT DISTINCT, ORDER BY can ONLY reference columns in the SELECT list
     - **RANKING QUERIES**: Use subquery to get top N ads first, then join with creative details
@@ -426,12 +485,15 @@ Return ONLY the SQL query, no explanations.`;
   }
 
   // Translate natural language to SQL using dynamic schema
-  async translateToSQL(userQuestion) {
+  async translateToSQL(userQuestion, errorContext = null) {
     const translationId = Math.random().toString(36).substring(2, 8);
     const startTime = Date.now();
     
     try {
       console.log(`🔄 [${translationId}] Starting SQL translation for: "${userQuestion}"`);
+      if (errorContext) {
+        console.log(`🔄 [${translationId}] This is a retry attempt with error context`);
+      }
       
       // Get fresh schema
       console.log(`📋 [${translationId}] Fetching database schema...`);
@@ -443,6 +505,12 @@ Return ONLY the SQL query, no explanations.`;
       const systemPrompt = this.generateSystemPrompt(schema);
       console.log(`✅ [${translationId}] System prompt generated (${systemPrompt.length} characters)`);
       
+      // Prepare user message with error context if this is a retry
+      let userMessage = userQuestion;
+      if (errorContext) {
+        userMessage = this.buildRetryMessage(userQuestion, errorContext);
+      }
+      
       // Call Anthropic API
       console.log(`🤖 [${translationId}] Calling Anthropic Claude API...`);
       const response = await this.anthropic.messages.create({
@@ -451,7 +519,7 @@ Return ONLY the SQL query, no explanations.`;
         temperature: 0.1,
         system: systemPrompt,
         messages: [
-          { role: "user", content: userQuestion }
+          { role: "user", content: userMessage }
         ]
       });
 
@@ -474,6 +542,33 @@ Return ONLY the SQL query, no explanations.`;
       console.error(`📋 [${translationId}] Error details:`, error);
       throw new Error('Failed to translate question to SQL');
     }
+  }
+
+  // Build retry message with error context
+  buildRetryMessage(originalQuestion, errorContext) {
+    const { sqlQuery, error, errorCode, errorDetails } = errorContext;
+    
+    let retryMessage = `Original question: "${originalQuestion}"\n\n`;
+    retryMessage += `The previous SQL query failed with an error. Please fix the query:\n\n`;
+    retryMessage += `Failed SQL query:\n${sqlQuery}\n\n`;
+    retryMessage += `Error: ${error}\n`;
+    retryMessage += `Error code: ${errorCode}\n`;
+    
+    if (errorDetails) {
+      if (errorDetails.detail) {
+        retryMessage += `Error detail: ${errorDetails.detail}\n`;
+      }
+      if (errorDetails.hint) {
+        retryMessage += `Hint: ${errorDetails.hint}\n`;
+      }
+      if (errorDetails.position) {
+        retryMessage += `Error position: ${errorDetails.position}\n`;
+      }
+    }
+    
+    retryMessage += `\nPlease generate a corrected SQL query that addresses the error above.`;
+    
+    return retryMessage;
   }
 
   // Clean and validate SQL query
@@ -771,63 +866,134 @@ If the data contains asset URLs (image or video files), include them in your res
     let translationId = null;
     let schemaId = null;
     let queryId = null;
+    let retryCount = 0;
+    const maxRetries = 3;
     
     try {
       console.log(`🤖 [${sessionId}] Processing chat message: "${userMessage}"`);
       
-      // Step 1: Translate to SQL
-      console.log(`🔄 [${sessionId}] Step 1: Translating natural language to SQL...`);
-      const translationStart = Date.now();
-      const sqlQuery = await this.translateToSQL(userMessage);
-      translationTime = Date.now() - translationStart;
-      translationId = Math.random().toString(36).substring(2, 8);
-      console.log(`✅ [${sessionId}] SQL translation completed in ${translationTime}ms`);
+      let sqlQuery = null;
+      let queryResult = null;
       
-      // Step 2: Execute query
-      console.log(`🔄 [${sessionId}] Step 2: Executing SQL query...`);
-      const queryResult = await this.executeQuery(sqlQuery);
-      queryExecutionTime = queryResult.executionTime || 0;
-      queryId = queryResult.queryId;
-      
-      if (!queryResult.success) {
-        console.log(`❌ [${sessionId}] Query execution failed: ${queryResult.error}`);
+      // Retry loop for SQL translation and execution
+      while (retryCount <= maxRetries) {
+        try {
+          // Step 1: Translate to SQL (with error context on retries)
+          console.log(`🔄 [${sessionId}] Step 1: Translating natural language to SQL (attempt ${retryCount + 1}/${maxRetries + 1})...`);
+          const translationStart = Date.now();
+          
+          // Pass error context for retries
+          const errorContext = retryCount > 0 ? {
+            sqlQuery: sqlQuery,
+            error: queryResult?.error,
+            errorCode: queryResult?.errorCode,
+            errorDetails: queryResult?.errorDetails
+          } : null;
+          
+          sqlQuery = await this.translateToSQL(userMessage, errorContext);
+          translationTime = Date.now() - translationStart;
+          translationId = Math.random().toString(36).substring(2, 8);
+          console.log(`✅ [${sessionId}] SQL translation completed in ${translationTime}ms`);
+          
+          // Step 2: Execute query
+          console.log(`🔄 [${sessionId}] Step 2: Executing SQL query (attempt ${retryCount + 1}/${maxRetries + 1})...`);
+          queryResult = await this.executeQuery(sqlQuery);
+          queryExecutionTime = queryResult.executionTime || 0;
+          queryId = queryResult.queryId;
+          
+          if (queryResult.success) {
+            console.log(`✅ [${sessionId}] Query execution successful: ${queryResult.rowCount} rows`);
+            break; // Success! Exit retry loop
+          } else {
+            console.log(`❌ [${sessionId}] Query execution failed (attempt ${retryCount + 1}/${maxRetries + 1}): ${queryResult.error}`);
+            
+            if (retryCount === maxRetries) {
+              // Final attempt failed, log and return error
+              console.log(`💥 [${sessionId}] All ${maxRetries + 1} attempts failed. Giving up.`);
+              
+              this.logUsageData({
+                sessionId,
+                queryId,
+                translationId,
+                schemaId,
+                userMessage,
+                userAgent: requestInfo.userAgent,
+                ipAddress: requestInfo.ipAddress,
+                sqlQuery: sqlQuery,
+                cleanedSqlQuery: sqlQuery,
+                queryType: this.detectQueryType(userMessage),
+                totalExecutionTime: Date.now() - startTime,
+                queryExecutionTime,
+                translationTime,
+                schemaFetchTime,
+                success: false,
+                rowCount: null,
+                errorMessage: queryResult.error,
+                errorCode: queryResult.errorCode,
+                errorDetails: queryResult.errorDetails,
+                assetsFound: 0,
+                systemPromptLength: 0,
+                schemaTablesCount: 0,
+                metadata: { 
+                  step: 'query_execution_final_failure',
+                  retryCount: retryCount,
+                  maxRetries: maxRetries
+                }
+              });
+              
+              return {
+                success: false,
+                error: queryResult.error,
+                errorCode: queryResult.errorCode,
+                errorDetails: queryResult.errorDetails,
+                message: `I couldn't execute that query after ${maxRetries + 1} attempts. Please try rephrasing your question.`,
+                sessionId: sessionId,
+                executionTime: Date.now() - startTime,
+                retryCount: retryCount
+              };
+            } else {
+              // Log the failure and continue to next retry
+              console.log(`🔄 [${sessionId}] Retrying with error context...`);
+              this.logUsageData({
+                sessionId,
+                queryId,
+                translationId,
+                schemaId,
+                userMessage,
+                userAgent: requestInfo.userAgent,
+                ipAddress: requestInfo.ipAddress,
+                sqlQuery: sqlQuery,
+                cleanedSqlQuery: sqlQuery,
+                queryType: this.detectQueryType(userMessage),
+                totalExecutionTime: Date.now() - startTime,
+                queryExecutionTime,
+                translationTime,
+                schemaFetchTime,
+                success: false,
+                rowCount: null,
+                errorMessage: queryResult.error,
+                errorCode: queryResult.errorCode,
+                errorDetails: queryResult.errorDetails,
+                assetsFound: 0,
+                systemPromptLength: 0,
+                schemaTablesCount: 0,
+                metadata: { 
+                  step: 'query_execution_retry',
+                  retryCount: retryCount,
+                  maxRetries: maxRetries
+                }
+              });
+            }
+          }
+        } catch (translationError) {
+          console.error(`💥 [${sessionId}] Translation error on attempt ${retryCount + 1}: ${translationError.message}`);
+          
+          if (retryCount === maxRetries) {
+            throw translationError; // Re-throw on final attempt
+          }
+        }
         
-        // Log the failure
-        this.logUsageData({
-          sessionId,
-          queryId,
-          translationId,
-          schemaId,
-          userMessage,
-          userAgent: requestInfo.userAgent,
-          ipAddress: requestInfo.ipAddress,
-          sqlQuery: sqlQuery,
-          cleanedSqlQuery: sqlQuery,
-          queryType: this.detectQueryType(userMessage),
-          totalExecutionTime: Date.now() - startTime,
-          queryExecutionTime,
-          translationTime,
-          schemaFetchTime,
-          success: false,
-          rowCount: null,
-          errorMessage: queryResult.error,
-          errorCode: queryResult.errorCode,
-          errorDetails: queryResult.errorDetails,
-          assetsFound: 0,
-          systemPromptLength: 0,
-          schemaTablesCount: 0,
-          metadata: { step: 'query_execution' }
-        });
-        
-        return {
-          success: false,
-          error: queryResult.error,
-          errorCode: queryResult.errorCode,
-          errorDetails: queryResult.errorDetails,
-          message: "I couldn't execute that query. Please try rephrasing your question.",
-          sessionId: sessionId,
-          executionTime: Date.now() - startTime
-        };
+        retryCount++;
       }
       
       console.log(`✅ [${sessionId}] Query execution successful: ${queryResult.rowCount} rows`);
@@ -873,7 +1039,9 @@ If the data contains asset URLs (image or video files), include them in your res
         metadata: { 
           step: 'success',
           columns: queryResult.columns,
-          hasAssets: assetUrls.length > 0
+          hasAssets: assetUrls.length > 0,
+          retryCount: retryCount,
+          maxRetries: maxRetries
         }
       });
       
@@ -889,7 +1057,8 @@ If the data contains asset URLs (image or video files), include them in your res
         sessionId: sessionId,
         executionTime: totalTime,
         queryExecutionTime: queryResult.executionTime,
-        queryId: queryResult.queryId
+        queryId: queryResult.queryId,
+        retryCount: retryCount
       };
     } catch (error) {
       const totalTime = Date.now() - startTime;
