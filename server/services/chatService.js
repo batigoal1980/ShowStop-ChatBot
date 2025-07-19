@@ -344,8 +344,8 @@ HAVING SUM(impressions) >= 1000
 ORDER BY total_spend DESC
 LIMIT 100
 
-**3. TOP PERFORMING VIDEOS BY CTR:**
-SELECT DISTINCT
+**3. TOP PERFORMING VIDEOS BY IMPRESSIONS:**
+SELECT 
     a.raw_ad_id,
     a.name as ad_name,
     vl.url as video_url,
@@ -367,40 +367,39 @@ FROM (
     FROM t_ad_daily_performance
     WHERE date >= CURRENT_DATE - INTERVAL '30 days'
     GROUP BY raw_ad_id
-    HAVING SUM(impressions) >= 1000
-    ORDER BY (SUM(clicks)::float / NULLIF(SUM(impressions), 0)) DESC
-    LIMIT 100
+    HAVING SUM(video_views) > 0  -- ✅ CRITICAL: Filter for video ads only
+    ORDER BY SUM(impressions) DESC
+    LIMIT 50  -- ✅ Use larger limit to account for ads without video clips
 ) ad_performance
 JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
-JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-ORDER BY a.raw_ad_id
+JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id AND vl.clip_sno = 1
+ORDER BY total_impressions DESC
 LIMIT 10
 
 **❌ WRONG PATTERNS (DO NOT USE):**
 -- 1. Direct GROUP BY on creative labelings tables (causes double counting)
 -- 2. ORDER BY calculated expressions in SELECT DISTINCT
 -- 3. Missing subquery with SELECT DISTINCT for format comparisons
+-- 4. ORDER BY ctr DESC, roas DESC, etc. in SELECT DISTINCT (use ORDER BY raw_ad_id instead)
+
+**RANKING QUERIES RULE:**
+For ranking queries (top X by CTR, ROAS, etc.), use subquery to get top N ads first, then join with creative details.
+Use AND vl.clip_sno = 1 in the JOIN to get only the first video clip per ad and avoid duplicates.
+**CRITICAL VIDEO FILTERING**: For ALL video-specific queries, ALWAYS use HAVING SUM(video_views) > 0 in subquery to filter for video ads only.
+**IMPORTANT**: Use LIMIT X*5 in subquery to account for ads without video clips, then LIMIT X in final SELECT.
+This allows proper ordering by calculated expressions (CTR, ROAS) in the final SELECT.
 
 IMPORTANT RULES:
-0. **UNIQUE AD RULE**: When querying video/image ads, use SELECT DISTINCT to ensure only one row per unique ad, since multiple video clips can belong to the same ad. This prevents double-counting when the same ad has multiple video clips. For ad format comparisons, use a subquery with SELECT DISTINCT first, then GROUP BY the format.
 1. **ALWAYS SCAN SCHEMA FIRST** - Check which columns exist in which tables before writing queries
 2. **NEVER use column names that don't exist in the schema**
-3. **ALWAYS verify column names before using them in queries**
-4. **Use exact column names as shown in the schema (case-sensitive)**
-5. Write clean PostgreSQL queries
-6. For date filtering: Use proper date functions and intervals
-7. Use aggregation functions (SUM, AVG, COUNT) when appropriate
-8. Always include LIMIT 100 unless asked for specific limit
-9. Use COALESCE() for NULL values
-10. Common metrics: spend, impressions, clicks, purchases, purchase_value, roas
-11. Image creative features: Use f_xxx columns from t_ad_image_labelings (e.g., f_bright_colors, f_dominant_color, f_ad_type)
-12. Video creative features: Use cf_xxx columns from t_ad_video_labelings (e.g., cf_bright_colors, cf_dominant_color)
-13. Ad format analysis: Use t_ad_image_labelings.f_ad_type for comparing different ad formats (NOT t_ad.f_ad_type)
-14. **CRITICAL ANTI-DOUBLE-COUNTING RULE**: NEVER use direct JOIN between creative labelings tables (t_ad_video_labelings, t_ad_image_labelings) and t_ad_daily_performance. ALWAYS aggregate t_ad_daily_performance by raw_ad_id first using a subquery.
-15. **AD FORMAT COMPARISON RULE**: When comparing ad formats, NEVER use direct GROUP BY on creative labelings tables. ALWAYS use a subquery with SELECT DISTINCT first to get unique ads, then GROUP BY the format in the outer query.
-16. **CRITICAL AD FORMAT AGGREGATION RULE**: For ad format comparison queries, ALWAYS use this pattern: FROM (SELECT DISTINCT ...) subquery GROUP BY format. NEVER use direct GROUP BY on t_ad_video_labelings or t_ad_image_labelings tables.
-17. **VIDEO AD TYPE COMPARISON RULE**: When comparing video performance across different ad types, use the "VIDEO PERFORMANCE ACROSS DIFFERENT AD TYPES" pattern with subquery containing SELECT DISTINCT, then GROUP BY video_ad_type in outer query.
-18. **CRITICAL POSTGRESQL SYNTAX RULES**:
+3. **Use exact column names as shown in the schema (case-sensitive)**
+4. **CRITICAL ANTI-DOUBLE-COUNTING RULE**: NEVER use direct JOIN between creative labelings tables and t_ad_daily_performance. ALWAYS aggregate t_ad_daily_performance by raw_ad_id first using a subquery.
+5. **AD FORMAT COMPARISON RULE**: When comparing ad formats, use a subquery with SELECT DISTINCT first to get unique ads, then GROUP BY the format in the outer query.
+6. **Image creative features**: Use f_xxx columns from t_ad_image_labelings
+7. **Video creative features**: Use cf_xxx columns from t_ad_video_labelings
+8. **Ad format analysis**: Use t_ad_image_labelings.f_ad_type for image formats, t_ad_video_labelings.video_ad_type for video formats
+9. **Video filtering**: For video-specific queries, use HAVING SUM(video_views) > 0 in subquery to filter for video ads only
+10. **CRITICAL POSTGRESQL SYNTAX RULES**:
     - ALWAYS use ROUND(value::numeric, 2) for rounding (NEVER use ROUND(double, int))
     - ALWAYS cast to ::numeric before using ROUND() function
     - Use ::float for division operations
@@ -408,14 +407,11 @@ IMPORTANT RULES:
     - Use NULLIF(denominator, 0) to avoid division by zero
     - AVOID CTEs (WITH clauses) - use simple SELECT statements
     - Example: ROUND((SUM(spend)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2)
-    - **MOST CRITICAL**: When using SELECT DISTINCT, ORDER BY can ONLY reference columns in the SELECT list
-    - **NEVER**: ORDER BY calculated expressions (CTR, ROAS) in SELECT DISTINCT - do it in subquery instead
-    - **CRITICAL ORDERING RULE**: For ranking queries, use subquery to get top N ads first, then join with creative details to avoid duplicates
-    - **IMPORTANT**: For all "top X video" queries, use LIMIT X*10 in subquery to account for ads without video labelings
-    - **UNIVERSAL MULTIPLIER**: Use 10x multiplier for all video ranking queries (CTR, ROAS, impressions, etc.)
-    - **DISTINCT CONSTRAINT**: When using SELECT DISTINCT, ORDER BY columns must be in SELECT list - use subquery ordering instead
-    - **CRITICAL**: For SELECT DISTINCT queries, ONLY order by columns that exist in SELECT list (like raw_ad_id, ad_name)
-    - **NEVER**: Order by calculated expressions (like CTR, ROAS) in final SELECT DISTINCT - do it in subquery instead
+    - **SELECT DISTINCT RULE**: When using SELECT DISTINCT, ORDER BY can ONLY reference columns in the SELECT list
+    - **RANKING QUERIES**: Use subquery to get top N ads first, then join with creative details
+    - **DUPLICATE PREVENTION**: Always use AND vl.clip_sno = 1 when joining with video_labelings to get only the first clip per ad
+    - **ORDERING**: For ranking queries, use exact LIMIT X in subquery and ORDER BY the raw metric value (ad_performance.impressions) in final SELECT
+    - **CRITICAL VIDEO FILTERING**: For ALL video queries, ALWAYS use HAVING SUM(video_views) > 0 in subquery
     - Example: FROM (SELECT raw_ad_id, SUM(impressions) FROM t_ad_daily_performance GROUP BY raw_ad_id ORDER BY SUM(impressions) DESC LIMIT 50) ad_performance
     - CTR Example: FROM (SELECT raw_ad_id, SUM(clicks), SUM(impressions) FROM t_ad_daily_performance GROUP BY raw_ad_id HAVING SUM(impressions) >= 1000 ORDER BY (SUM(clicks)::float / NULLIF(SUM(impressions), 0)) DESC LIMIT 100) ad_performance
     - ROAS Example: FROM (SELECT raw_ad_id, SUM(spend), SUM(purchase_value) FROM t_ad_daily_performance WHERE date >= '2025-07-01' GROUP BY raw_ad_id ORDER BY (SUM(purchase_value)::float / NULLIF(SUM(spend), 0)) DESC LIMIT 50) ad_performance

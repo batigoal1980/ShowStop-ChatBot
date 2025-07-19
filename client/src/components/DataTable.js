@@ -16,10 +16,16 @@ const DataTable = ({ data, columns }) => {
       if (aValue === null || aValue === undefined) return 1;
       if (bValue === null || bValue === undefined) return -1;
 
-      if (typeof aValue === 'number' && typeof bValue === 'number') {
-        return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue;
+      // Convert to numbers if they look like numbers (including strings that represent numbers)
+      const aNum = typeof aValue === 'number' ? aValue : parseFloat(aValue);
+      const bNum = typeof bValue === 'number' ? bValue : parseFloat(bValue);
+
+      // If both values are valid numbers, sort numerically
+      if (!isNaN(aNum) && !isNaN(bNum)) {
+        return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
       }
 
+      // Otherwise, sort as strings
       const aString = String(aValue).toLowerCase();
       const bString = String(bValue).toLowerCase();
 
