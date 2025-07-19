@@ -39,6 +39,7 @@ const MediaAsset = ({ url, title, type = 'auto' }) => {
   };
 
   if (mediaType === 'video') {
+    console.log('Rendering video component with URL:', url);
     return (
       <div className="relative group">
         <video
@@ -46,10 +47,11 @@ const MediaAsset = ({ url, title, type = 'auto' }) => {
           controls
           preload="metadata"
           onError={(e) => {
-            console.error('Failed to load video:', url);
+            console.error('Failed to load video:', url, e);
             e.target.style.display = 'none';
           }}
           onLoadStart={() => console.log('Video loading started:', url)}
+          onLoadedData={() => console.log('Video loaded successfully:', url)}
         >
           <source src={url} type="video/mp4" />
           Your browser does not support the video tag.
@@ -74,6 +76,7 @@ const MediaAsset = ({ url, title, type = 'auto' }) => {
   }
 
   if (mediaType === 'image') {
+    console.log('Rendering image component with URL:', url);
     return (
       <div className="relative group">
         <img
@@ -82,7 +85,7 @@ const MediaAsset = ({ url, title, type = 'auto' }) => {
           className="w-full aspect-[9/16] object-cover rounded-lg shadow-md cursor-pointer hover:shadow-lg transition-shadow"
           onClick={handleFullscreen}
           onError={(e) => {
-            console.error('Failed to load image:', url);
+            console.error('Failed to load image:', url, e);
             e.target.style.display = 'none';
           }}
           onLoad={() => console.log('Image loaded successfully:', url)}
@@ -106,9 +109,9 @@ const MediaAsset = ({ url, title, type = 'auto' }) => {
     );
   }
 
-  // Fallback for unknown media types
+  // Fallback for unknown media types or failed loads
   return (
-    <div className="p-4 bg-gray-100 rounded-lg border border-gray-200">
+    <div className="p-4 bg-gray-100 rounded-lg border border-gray-200 min-h-[200px] flex items-center justify-center">
       <div className="flex items-center space-x-2">
         <div className="w-8 h-8 bg-gray-300 rounded flex items-center justify-center">
           <span className="text-xs text-gray-600">?</span>
@@ -125,6 +128,9 @@ const MediaAsset = ({ url, title, type = 'auto' }) => {
           >
             View Asset
           </a>
+          <div className="text-xs text-gray-500 mt-1">
+            {mediaType === 'unknown' ? 'Unknown format' : 'Failed to load'}
+          </div>
         </div>
       </div>
     </div>
