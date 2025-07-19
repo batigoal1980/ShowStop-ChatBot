@@ -280,13 +280,15 @@ GROUP BY il.f_ad_type
 ORDER BY total_spend DESC
 LIMIT 100
 
-**VIDEO AD FORMATS:**
-SELECT 
+**VIDEO AD FORMATS (WITH DISTINCT AD AGGREGATION):**
+SELECT DISTINCT
+    a.raw_ad_id,
+    a.name as ad_name,
     vl.video_ad_type,
-    SUM(ad_performance.spend) as total_spend,
-    SUM(ad_performance.impressions) as total_impressions,
-    SUM(ad_performance.clicks) as total_clicks,
-    ROUND((SUM(ad_performance.clicks)::float / NULLIF(SUM(ad_performance.impressions), 0) * 100)::numeric, 2) as ctr
+    ad_performance.spend as total_spend,
+    ad_performance.impressions as total_impressions,
+    ad_performance.clicks as total_clicks,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
 FROM t_ad_video_labelings vl
 JOIN t_ad a ON vl.raw_asset_id = a.asset_id
 JOIN (
@@ -295,21 +297,22 @@ JOIN (
     WHERE date >= CURRENT_DATE - INTERVAL '30 days'
     GROUP BY raw_ad_id
 ) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
-GROUP BY vl.video_ad_type
 ORDER BY total_spend DESC
 LIMIT 100
 
-**COMBINED AD FORMATS (IMAGE + VIDEO):**
-SELECT 
+**COMBINED AD FORMATS (IMAGE + VIDEO WITH DISTINCT AD AGGREGATION):**
+SELECT DISTINCT
+    a.raw_ad_id,
+    a.name as ad_name,
     COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
     CASE 
         WHEN il.f_ad_type IS NOT NULL THEN 'Image'
         WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
     END as media_type,
-    SUM(ad_performance.spend) as total_spend,
-    SUM(ad_performance.impressions) as total_impressions,
-    SUM(ad_performance.clicks) as total_clicks,
-    ROUND((SUM(ad_performance.clicks)::float / NULLIF(SUM(ad_performance.impressions), 0) * 100)::numeric, 2) as ctr
+    ad_performance.spend as total_spend,
+    ad_performance.impressions as total_impressions,
+    ad_performance.clicks as total_clicks,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
 FROM t_ad a
 LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
 LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
@@ -320,11 +323,6 @@ JOIN (
     GROUP BY raw_ad_id
 ) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
 WHERE (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
-GROUP BY COALESCE(il.f_ad_type, vl.video_ad_type), 
-         CASE 
-             WHEN il.f_ad_type IS NOT NULL THEN 'Image'
-             WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
-         END
 ORDER BY total_spend DESC
 LIMIT 100
 
@@ -517,7 +515,7 @@ IMPORTANT RULES:
 12. Video creative features: Use cf_xxx columns from t_ad_video_labelings (e.g., cf_bright_colors, cf_dominant_color)
 13. Ad format analysis: Use t_ad_image_labelings.f_ad_type for comparing different ad formats (NOT t_ad.f_ad_type)
 14. **CRITICAL ANTI-DOUBLE-COUNTING RULE**: NEVER use direct JOIN between creative labelings tables (t_ad_video_labelings, t_ad_image_labelings) and t_ad_daily_performance. ALWAYS aggregate t_ad_daily_performance by raw_ad_id first using a subquery.
-15. **UNIQUE AD RULE**: When querying video/image ads, use DISTINCT ON (raw_ad_id) to ensure only one row per unique ad, since multiple video clips can belong to the same ad.
+15. **UNIQUE AD RULE**: When querying video/image ads, use SELECT DISTINCT to ensure only one row per unique ad, since multiple video clips can belong to the same ad. This prevents double-counting when the same ad has multiple video clips.
 15. **CRITICAL POSTGRESQL SYNTAX RULES**:
     - ALWAYS use ROUND(value::numeric, 2) for rounding (NEVER use ROUND(double, int))
     - ALWAYS cast to ::numeric before using ROUND() function
