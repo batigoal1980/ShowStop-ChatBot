@@ -181,6 +181,11 @@ NEVER use direct JOIN between t_ad_video_labelings/t_ad_image_labelings and t_ad
 ALWAYS use subquery to aggregate t_ad_daily_performance by raw_ad_id first, then join with creative labelings tables.
 This prevents double counting when multiple video clips belong to the same ad.
 
+🚨 **CRITICAL AD FORMAT COMPARISON RULE** 🚨
+For ad format comparison queries, ALWAYS use this pattern:
+FROM (SELECT DISTINCT a.raw_ad_id, ...) subquery GROUP BY format
+NEVER use direct GROUP BY on creative labelings tables - this causes double-counting!
+
 ${schemaText}
 
 STEP-BY-STEP QUERY GENERATION PROCESS:
@@ -325,6 +330,68 @@ JOIN (
 WHERE (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
 ORDER BY total_spend DESC
 LIMIT 100
+
+**AD FORMAT COMPARISON (AGGREGATED BY FORMAT):**
+SELECT 
+    ad_format,
+    media_type,
+    COUNT(DISTINCT raw_ad_id) as number_of_ads,
+    SUM(spend) as total_spend,
+    SUM(impressions) as total_impressions,
+    SUM(clicks) as total_clicks,
+    SUM(purchases) as total_purchases,
+    SUM(purchase_value) as total_revenue,
+    ROUND((SUM(clicks)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2) as ctr,
+    ROUND((SUM(purchase_value)::float / NULLIF(SUM(spend), 0))::numeric, 2) as roas
+FROM (
+    SELECT DISTINCT
+        a.raw_ad_id,
+        a.name as ad_name,
+        COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
+        CASE 
+            WHEN il.f_ad_type IS NOT NULL THEN 'Image'
+            WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
+        END as media_type,
+        ad_performance.spend,
+        ad_performance.impressions,
+        ad_performance.clicks,
+        ad_performance.purchases,
+        ad_performance.purchase_value
+    FROM t_ad a
+    LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
+    LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+    JOIN (
+        SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, 
+               SUM(clicks) as clicks, SUM(purchases) as purchases, SUM(purchase_value) as purchase_value
+        FROM t_ad_daily_performance 
+        WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY raw_ad_id
+    ) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+    WHERE (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
+) distinct_ads
+GROUP BY ad_format, media_type
+HAVING SUM(impressions) >= 1000
+ORDER BY total_spend DESC
+LIMIT 100
+
+**WRONG PATTERN FOR AD FORMAT COMPARISON (DO NOT USE - CAUSES DOUBLE COUNTING):**
+-- ❌ WRONG: This will double-count ads with multiple video clips
+SELECT 
+    COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
+    COUNT(DISTINCT a.raw_ad_id) as number_of_ads,
+    SUM(ad_performance.spend) as total_spend
+FROM t_ad a
+LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
+LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+JOIN (
+    SELECT raw_ad_id, SUM(spend) as spend
+    FROM t_ad_daily_performance 
+    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    GROUP BY raw_ad_id
+) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+WHERE (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
+GROUP BY COALESCE(il.f_ad_type, vl.video_ad_type)  -- ❌ WRONG: This groups by clips, not ads
+ORDER BY total_spend DESC
 
 **TOP PERFORMING VIDEOS (CORRECT PATTERN - NO DOUBLE COUNTING):**
 -- Note: Use LIMIT 50 in subquery to get top 5 after JOIN (10x multiplier to account for ads without video labelings)
@@ -515,7 +582,9 @@ IMPORTANT RULES:
 12. Video creative features: Use cf_xxx columns from t_ad_video_labelings (e.g., cf_bright_colors, cf_dominant_color)
 13. Ad format analysis: Use t_ad_image_labelings.f_ad_type for comparing different ad formats (NOT t_ad.f_ad_type)
 14. **CRITICAL ANTI-DOUBLE-COUNTING RULE**: NEVER use direct JOIN between creative labelings tables (t_ad_video_labelings, t_ad_image_labelings) and t_ad_daily_performance. ALWAYS aggregate t_ad_daily_performance by raw_ad_id first using a subquery.
-15. **UNIQUE AD RULE**: When querying video/image ads, use SELECT DISTINCT to ensure only one row per unique ad, since multiple video clips can belong to the same ad. This prevents double-counting when the same ad has multiple video clips.
+15. **UNIQUE AD RULE**: When querying video/image ads, use SELECT DISTINCT to ensure only one row per unique ad, since multiple video clips can belong to the same ad. This prevents double-counting when the same ad has multiple video clips. For ad format comparisons, use a subquery with SELECT DISTINCT first, then GROUP BY the format.
+16. **AD FORMAT COMPARISON RULE**: When comparing ad formats, NEVER use direct GROUP BY on creative labelings tables. ALWAYS use a subquery with SELECT DISTINCT first to get unique ads, then GROUP BY the format in the outer query.
+17. **CRITICAL AD FORMAT AGGREGATION RULE**: For ad format comparison queries, ALWAYS use this pattern: FROM (SELECT DISTINCT ...) subquery GROUP BY format. NEVER use direct GROUP BY on t_ad_video_labelings or t_ad_image_labelings tables.
 15. **CRITICAL POSTGRESQL SYNTAX RULES**:
     - ALWAYS use ROUND(value::numeric, 2) for rounding (NEVER use ROUND(double, int))
     - ALWAYS cast to ::numeric before using ROUND() function
