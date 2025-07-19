@@ -304,7 +304,7 @@ ORDER BY total_spend DESC
 LIMIT 100
 
 **TOP PERFORMING VIDEOS (CORRECT PATTERN - NO DOUBLE COUNTING):**
--- Note: Use LIMIT 20 in subquery to get top 5 after JOIN (4x multiplier to account for ads without video labelings)
+-- Note: Use LIMIT 50 in subquery to get top 5 after JOIN (10x multiplier to account for ads without video labelings)
 SELECT DISTINCT
     a.raw_ad_id,
     a.name as ad_name,
@@ -332,7 +332,7 @@ ORDER BY ad_performance.purchase_value DESC, a.raw_ad_id
 LIMIT 5
 
 **TOP PERFORMING VIDEOS BY IMPRESSIONS (CORRECT ORDERING):**
--- Note: Use LIMIT 20 in subquery to get top 5 after JOIN (4x multiplier to account for ads without video labelings)
+-- Note: Use LIMIT 50 in subquery to get top 5 after JOIN (10x multiplier to account for ads without video labelings)
 SELECT DISTINCT
     a.raw_ad_id,
     a.name as ad_name,
@@ -356,11 +356,125 @@ FROM (
     WHERE date >= '2025-07-01' AND date < '2025-08-01'
     GROUP BY raw_ad_id
     ORDER BY SUM(impressions) DESC
-    LIMIT 20
+    LIMIT 50
 ) ad_performance
 JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
 JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
 ORDER BY ad_performance.impressions DESC, a.raw_ad_id
+LIMIT 5
+
+**TOP PERFORMING VIDEOS BY CTR (CORRECT ORDERING):**
+-- Note: Use LIMIT 100 in subquery to get top 10 after JOIN (10x multiplier to account for ads without video labelings)
+-- IMPORTANT: Order by CTR in subquery, not in final SELECT DISTINCT
+SELECT DISTINCT
+    a.raw_ad_id,
+    a.name as ad_name,
+    vl.url as video_url,
+    vl.video_ad_type,
+    vl.video_duration,
+    ad_performance.impressions as total_impressions,
+    ad_performance.clicks as total_clicks,
+    ad_performance.spend as total_spend,
+    ad_performance.purchases as total_purchases,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr,
+    ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas
+FROM (
+    SELECT raw_ad_id, 
+           SUM(impressions) as impressions,
+           SUM(spend) as spend,
+           SUM(clicks) as clicks,
+           SUM(purchases) as purchases,
+           SUM(purchase_value) as purchase_value
+    FROM t_ad_daily_performance
+    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    GROUP BY raw_ad_id
+    HAVING SUM(impressions) >= 1000
+    ORDER BY (SUM(clicks)::float / NULLIF(SUM(impressions), 0)) DESC
+    LIMIT 100
+) ad_performance
+JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
+JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+ORDER BY a.raw_ad_id
+LIMIT 10
+
+**WRONG PATTERN (DO NOT USE):**
+-- This will FAIL: ORDER BY calculated expression in SELECT DISTINCT
+SELECT DISTINCT
+    a.raw_ad_id,
+    a.name as ad_name,
+    vl.url as video_url,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
+FROM (
+    SELECT raw_ad_id, SUM(impressions) as impressions, SUM(clicks) as clicks
+    FROM t_ad_daily_performance
+    GROUP BY raw_ad_id
+    ORDER BY SUM(impressions) DESC
+    LIMIT 50
+) ad_performance
+JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
+JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+ORDER BY ctr DESC  -- ❌ WRONG: calculated expression not in SELECT list
+LIMIT 10
+
+**CORRECT PATTERN FOR CTR QUERIES:**
+-- ✅ CORRECT: Order by CTR in subquery, not in final SELECT DISTINCT
+SELECT DISTINCT
+    a.raw_ad_id,
+    a.name as ad_name,
+    vl.url as video_url,
+    vl.video_ad_type,
+    vl.video_duration,
+    ad_performance.impressions as total_impressions,
+    ad_performance.clicks as total_clicks,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
+FROM (
+    SELECT raw_ad_id, 
+           SUM(impressions) as impressions,
+           SUM(clicks) as clicks
+    FROM t_ad_daily_performance
+    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    GROUP BY raw_ad_id
+    HAVING SUM(impressions) >= 1000
+    ORDER BY (SUM(clicks)::float / NULLIF(SUM(impressions), 0)) DESC  -- ✅ Order by CTR here
+    LIMIT 100
+) ad_performance
+JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
+JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+ORDER BY a.raw_ad_id  -- ✅ Only order by columns in SELECT list
+LIMIT 10
+
+**TOP PERFORMING VIDEOS BY ROAS (CORRECT ORDERING):**
+-- Note: Use LIMIT 50 in subquery to get top 5 after JOIN (10x multiplier to account for ads without video labelings)
+-- IMPORTANT: Order by ROAS in subquery, not in final SELECT DISTINCT
+SELECT DISTINCT
+    a.raw_ad_id,
+    a.name as ad_name,
+    vl.url as video_url,
+    vl.video_ad_type,
+    vl.video_duration,
+    ad_performance.spend as total_spend,
+    ad_performance.impressions as total_impressions,
+    ad_performance.clicks as total_clicks,
+    ad_performance.purchases as total_purchases,
+    ad_performance.purchase_value as total_revenue,
+    ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
+FROM (
+    SELECT raw_ad_id, 
+           SUM(spend) as spend,
+           SUM(impressions) as impressions,
+           SUM(clicks) as clicks,
+           SUM(purchases) as purchases,
+           SUM(purchase_value) as purchase_value
+    FROM t_ad_daily_performance
+    WHERE date >= '2025-07-01' AND date < '2025-08-01'
+    GROUP BY raw_ad_id
+    ORDER BY (SUM(purchase_value)::float / NULLIF(SUM(spend), 0)) DESC  -- ✅ Order by ROAS here
+    LIMIT 50
+) ad_performance
+JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
+JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+ORDER BY a.raw_ad_id  -- ✅ Only order by columns in SELECT list
 LIMIT 5
 
 IMPORTANT RULES:
@@ -387,9 +501,17 @@ IMPORTANT RULES:
     - Use NULLIF(denominator, 0) to avoid division by zero
     - AVOID CTEs (WITH clauses) - use simple SELECT statements
     - Example: ROUND((SUM(spend)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2)
+    - **MOST CRITICAL**: When using SELECT DISTINCT, ORDER BY can ONLY reference columns in the SELECT list
+    - **NEVER**: ORDER BY calculated expressions (CTR, ROAS) in SELECT DISTINCT - do it in subquery instead
     - **CRITICAL ORDERING RULE**: For ranking queries, use subquery to get top N ads first, then join with creative details to avoid duplicates
-    - **IMPORTANT**: When user asks for "top X", use LIMIT X*4 in subquery to account for ads without creative labelings
-    - Example: FROM (SELECT raw_ad_id, SUM(impressions) FROM t_ad_daily_performance GROUP BY raw_ad_id ORDER BY SUM(impressions) DESC LIMIT 20) ad_performance
+    - **IMPORTANT**: For all "top X video" queries, use LIMIT X*10 in subquery to account for ads without video labelings
+    - **UNIVERSAL MULTIPLIER**: Use 10x multiplier for all video ranking queries (CTR, ROAS, impressions, etc.)
+    - **DISTINCT CONSTRAINT**: When using SELECT DISTINCT, ORDER BY columns must be in SELECT list - use subquery ordering instead
+    - **CRITICAL**: For SELECT DISTINCT queries, ONLY order by columns that exist in SELECT list (like raw_ad_id, ad_name)
+    - **NEVER**: Order by calculated expressions (like CTR, ROAS) in final SELECT DISTINCT - do it in subquery instead
+    - Example: FROM (SELECT raw_ad_id, SUM(impressions) FROM t_ad_daily_performance GROUP BY raw_ad_id ORDER BY SUM(impressions) DESC LIMIT 50) ad_performance
+    - CTR Example: FROM (SELECT raw_ad_id, SUM(clicks), SUM(impressions) FROM t_ad_daily_performance GROUP BY raw_ad_id HAVING SUM(impressions) >= 1000 ORDER BY (SUM(clicks)::float / NULLIF(SUM(impressions), 0)) DESC LIMIT 100) ad_performance
+    - ROAS Example: FROM (SELECT raw_ad_id, SUM(spend), SUM(purchase_value) FROM t_ad_daily_performance WHERE date >= '2025-07-01' GROUP BY raw_ad_id ORDER BY (SUM(purchase_value)::float / NULLIF(SUM(spend), 0)) DESC LIMIT 50) ad_performance
 
 **FINAL VERIFICATION:**
 Before returning the SQL, double-check that:
