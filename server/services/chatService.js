@@ -326,8 +326,38 @@ JOIN (
 ) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
 JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
 WHERE ad_performance.spend > 0
-ORDER BY a.raw_ad_id, ad_performance.purchase_value DESC
+ORDER BY ad_performance.purchase_value DESC, a.raw_ad_id
 LIMIT 5
+
+**TOP PERFORMING VIDEOS BY IMPRESSIONS (CORRECT ORDERING):**
+SELECT DISTINCT ON (a.raw_ad_id)
+    a.raw_ad_id,
+    a.name as ad_name,
+    vl.url as video_url,
+    vl.video_ad_type,
+    vl.video_duration,
+    ad_performance.impressions as total_impressions,
+    ad_performance.spend as total_spend,
+    ad_performance.clicks as total_clicks,
+    ad_performance.purchases as total_purchases,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr,
+    ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas
+FROM t_ad a
+JOIN (
+    SELECT raw_ad_id, 
+           SUM(impressions) as impressions,
+           SUM(spend) as spend,
+           SUM(clicks) as clicks,
+           SUM(purchases) as purchases,
+           SUM(purchase_value) as purchase_value
+    FROM t_ad_daily_performance
+    WHERE date >= '2025-07-01' AND date < '2025-08-01'
+    GROUP BY raw_ad_id
+) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+WHERE ad_performance.impressions > 0
+ORDER BY ad_performance.impressions DESC, a.raw_ad_id
+LIMIT 10
 
 IMPORTANT RULES:
 1. **ALWAYS SCAN SCHEMA FIRST** - Check which columns exist in which tables before writing queries
@@ -353,6 +383,8 @@ IMPORTANT RULES:
     - Use NULLIF(denominator, 0) to avoid division by zero
     - AVOID CTEs (WITH clauses) - use simple SELECT statements
     - Example: ROUND((SUM(spend)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2)
+    - **CRITICAL ORDERING RULE**: When using DISTINCT ON, order by the metric you want to rank by FIRST, then by the DISTINCT column
+    - Example: ORDER BY ad_performance.impressions DESC, a.raw_ad_id (NOT a.raw_ad_id, ad_performance.impressions DESC)
 
 **FINAL VERIFICATION:**
 Before returning the SQL, double-check that:
