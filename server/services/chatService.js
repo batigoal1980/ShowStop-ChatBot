@@ -568,6 +568,7 @@ ORDER BY a.raw_ad_id  -- ✅ Only order by columns in SELECT list
 LIMIT 5
 
 IMPORTANT RULES:
+0. **UNIQUE AD RULE**: When querying video/image ads, use SELECT DISTINCT to ensure only one row per unique ad, since multiple video clips can belong to the same ad. This prevents double-counting when the same ad has multiple video clips. For ad format comparisons, use a subquery with SELECT DISTINCT first, then GROUP BY the format.
 1. **ALWAYS SCAN SCHEMA FIRST** - Check which columns exist in which tables before writing queries
 2. **NEVER use column names that don't exist in the schema**
 3. **ALWAYS verify column names before using them in queries**
@@ -582,10 +583,9 @@ IMPORTANT RULES:
 12. Video creative features: Use cf_xxx columns from t_ad_video_labelings (e.g., cf_bright_colors, cf_dominant_color)
 13. Ad format analysis: Use t_ad_image_labelings.f_ad_type for comparing different ad formats (NOT t_ad.f_ad_type)
 14. **CRITICAL ANTI-DOUBLE-COUNTING RULE**: NEVER use direct JOIN between creative labelings tables (t_ad_video_labelings, t_ad_image_labelings) and t_ad_daily_performance. ALWAYS aggregate t_ad_daily_performance by raw_ad_id first using a subquery.
-15. **UNIQUE AD RULE**: When querying video/image ads, use SELECT DISTINCT to ensure only one row per unique ad, since multiple video clips can belong to the same ad. This prevents double-counting when the same ad has multiple video clips. For ad format comparisons, use a subquery with SELECT DISTINCT first, then GROUP BY the format.
-16. **AD FORMAT COMPARISON RULE**: When comparing ad formats, NEVER use direct GROUP BY on creative labelings tables. ALWAYS use a subquery with SELECT DISTINCT first to get unique ads, then GROUP BY the format in the outer query.
-17. **CRITICAL AD FORMAT AGGREGATION RULE**: For ad format comparison queries, ALWAYS use this pattern: FROM (SELECT DISTINCT ...) subquery GROUP BY format. NEVER use direct GROUP BY on t_ad_video_labelings or t_ad_image_labelings tables.
-15. **CRITICAL POSTGRESQL SYNTAX RULES**:
+15. **AD FORMAT COMPARISON RULE**: When comparing ad formats, NEVER use direct GROUP BY on creative labelings tables. ALWAYS use a subquery with SELECT DISTINCT first to get unique ads, then GROUP BY the format in the outer query.
+16. **CRITICAL AD FORMAT AGGREGATION RULE**: For ad format comparison queries, ALWAYS use this pattern: FROM (SELECT DISTINCT ...) subquery GROUP BY format. NEVER use direct GROUP BY on t_ad_video_labelings or t_ad_image_labelings tables.
+17. **CRITICAL POSTGRESQL SYNTAX RULES**:
     - ALWAYS use ROUND(value::numeric, 2) for rounding (NEVER use ROUND(double, int))
     - ALWAYS cast to ::numeric before using ROUND() function
     - Use ::float for division operations
