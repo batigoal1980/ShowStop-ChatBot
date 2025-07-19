@@ -856,6 +856,89 @@ If the data contains asset URLs (image or video files), include them in your res
     }
   }
 
+  // Detect if a question requires SQL or can be answered with general knowledge using Claude
+  async detectQuestionType(userMessage) {
+    try {
+      const response = await this.anthropic.messages.create({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 100,
+        messages: [
+          {
+            role: 'user',
+            content: `You are helping to classify user questions for a marketing analytics chatbot. 
+
+The chatbot has access to a marketing/advertising database with tables for campaigns, ads, performance metrics, creative assets, etc.
+
+Determine if the user's question requires querying the marketing database (SQL) or can be answered with general knowledge about marketing concepts.
+
+Question: "${userMessage}"
+
+Respond with ONLY "sql" if the question requires database querying (e.g., "show me top campaigns", "what is our spend", "compare performance", "find ads with specific criteria").
+
+Respond with ONLY "general" if the question is about concepts, definitions, how-to, best practices, or general marketing knowledge (e.g., "what is CTR", "how to improve performance", "explain ROAS", "best practices for video ads").
+
+Be strict - only use "sql" if the question specifically asks for data, metrics, or analysis from the database.`
+          }
+        ]
+      });
+      
+      const answer = response.content[0].text.trim().toLowerCase();
+      console.log(`🔍 Question type detection result: "${answer}" for question: "${userMessage}"`);
+      
+      // Default to SQL for ambiguous cases
+      return answer === 'general' ? 'general' : 'sql';
+      
+    } catch (error) {
+      console.error(`💥 Error in question type detection: ${error.message}`);
+      // Default to SQL for safety
+      return 'sql';
+    }
+  }
+
+  // Handle general knowledge questions with regular Claude
+  async handleGeneralQuestion(userMessage, sessionId) {
+    try {
+      console.log(`🤖 [${sessionId}] Handling general knowledge question with Claude...`);
+      
+      const response = await this.anthropic.messages.create({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 1000,
+        messages: [
+          {
+            role: 'user',
+            content: `You are a helpful marketing analytics assistant. Answer the following question about marketing, advertising, analytics, or general business concepts. Keep your response concise, informative, and practical. If the question is about marketing analytics concepts, provide clear explanations with examples when helpful.
+
+Question: ${userMessage}`
+          }
+        ]
+      });
+      
+      const answer = response.content[0].text;
+      console.log(`✅ [${sessionId}] General question answered successfully`);
+      
+      return {
+        success: true,
+        data: [],
+        explanation: answer,
+        sqlQuery: null,
+        rowCount: 0,
+        columns: [],
+        assetUrls: [],
+        timestamp: new Date().toISOString(),
+        sessionId: sessionId,
+        executionTime: 0,
+        queryExecutionTime: 0,
+        queryId: null,
+        retryCount: 0,
+        isGeneralQuestion: true
+      };
+      
+    } catch (error) {
+      console.error(`💥 [${sessionId}] Error handling general question: ${error.message}`);
+      throw error;
+    }
+  }
+
   // Main chat method
   async processChatMessage(userMessage, requestInfo = {}) {
     const sessionId = Math.random().toString(36).substring(2, 8);
@@ -871,6 +954,19 @@ If the data contains asset URLs (image or video files), include them in your res
     
     try {
       console.log(`🤖 [${sessionId}] Processing chat message: "${userMessage}"`);
+      
+      // Step 0: Detect question type
+      const questionType = await this.detectQuestionType(userMessage);
+      console.log(`🔍 [${sessionId}] Question type detected: ${questionType}`);
+      
+      // If it's a general question, handle with regular Claude
+      if (questionType === 'general') {
+        console.log(`📚 [${sessionId}] Using regular Claude for general knowledge question`);
+        return await this.handleGeneralQuestion(userMessage, sessionId);
+      }
+      
+      // Otherwise, proceed with SQL processing
+      console.log(`🗄️ [${sessionId}] Using SQL processing for data analysis question`);
       
       let sqlQuery = null;
       let queryResult = null;
@@ -921,7 +1017,7 @@ If the data contains asset URLs (image or video files), include them in your res
                 ipAddress: requestInfo.ipAddress,
                 sqlQuery: sqlQuery,
                 cleanedSqlQuery: sqlQuery,
-                queryType: this.detectQueryType(userMessage),
+                queryType: questionType, // Use the detected questionType
                 totalExecutionTime: Date.now() - startTime,
                 queryExecutionTime,
                 translationTime,
@@ -964,7 +1060,7 @@ If the data contains asset URLs (image or video files), include them in your res
                 ipAddress: requestInfo.ipAddress,
                 sqlQuery: sqlQuery,
                 cleanedSqlQuery: sqlQuery,
-                queryType: this.detectQueryType(userMessage),
+                queryType: questionType, // Use the detected questionType
                 totalExecutionTime: Date.now() - startTime,
                 queryExecutionTime,
                 translationTime,
@@ -1023,7 +1119,7 @@ If the data contains asset URLs (image or video files), include them in your res
         ipAddress: requestInfo.ipAddress,
         sqlQuery: sqlQuery,
         cleanedSqlQuery: sqlQuery,
-        queryType: this.detectQueryType(userMessage),
+        queryType: questionType, // Use the detected questionType
         totalExecutionTime: totalTime,
         queryExecutionTime,
         translationTime,
@@ -1058,7 +1154,8 @@ If the data contains asset URLs (image or video files), include them in your res
         executionTime: totalTime,
         queryExecutionTime: queryResult.executionTime,
         queryId: queryResult.queryId,
-        retryCount: retryCount
+        retryCount: retryCount,
+        isGeneralQuestion: false
       };
     } catch (error) {
       const totalTime = Date.now() - startTime;
@@ -1077,7 +1174,7 @@ If the data contains asset URLs (image or video files), include them in your res
         ipAddress: requestInfo.ipAddress,
         sqlQuery: null,
         cleanedSqlQuery: null,
-        queryType: this.detectQueryType(userMessage),
+        queryType: questionType, // Use the detected questionType
         totalExecutionTime: totalTime,
         queryExecutionTime,
         translationTime,
