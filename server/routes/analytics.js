@@ -1,11 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { Pool } = require('pg');
-
-const pool = new Pool({
-  connectionString: 'postgresql://admin:gHzAsyen7HFpmc6b@34.74.141.9:58832/prod_ad_insights',
-  ssl: { rejectUnauthorized: false }
-});
 
 // Get detailed campaign analytics
 router.get('/campaigns', async (req, res) => {
@@ -406,6 +400,167 @@ router.get('/funnel', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch funnel analytics'
+    });
+  }
+});
+
+// Get basic usage analytics data
+router.get('/usage', async (req, res) => {
+  try {
+    const pool = req.app.locals.db;
+    
+    // Get total requests in last 24 hours
+    const totalRequests = await pool.query(`
+      SELECT COUNT(*) as count 
+      FROM t_usage_logs 
+      WHERE timestamp >= NOW() - INTERVAL '24 hours'
+    `);
+    
+    // Get success rate in last 24 hours
+    const successRate = await pool.query(`
+      SELECT 
+        COUNT(*) FILTER (WHERE success = true) as successful,
+        COUNT(*) as total,
+        ROUND((COUNT(*) FILTER (WHERE success = true)::float / COUNT(*) * 100)::numeric, 2) as rate
+      FROM t_usage_logs 
+      WHERE timestamp >= NOW() - INTERVAL '24 hours'
+    `);
+    
+    // Get average response time in last 24 hours
+    const avgResponseTime = await pool.query(`
+      SELECT AVG(total_execution_time_ms) as avg_time
+      FROM t_usage_logs 
+      WHERE timestamp >= NOW() - INTERVAL '24 hours' AND success = true
+    `);
+    
+    res.json({
+      success: true,
+      data: {
+        totalRequests: totalRequests.rows[0].count,
+        successRate: successRate.rows[0].rate || 0,
+        avgResponseTime: Math.round(avgResponseTime.rows[0].avg_time || 0),
+        successfulRequests: successRate.rows[0].successful,
+        totalRequestsInPeriod: successRate.rows[0].total
+      }
+    });
+  } catch (error) {
+    console.error('Usage analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch usage analytics'
+    });
+  }
+});
+
+// Get usage analytics from the view
+router.get('/usage-details', async (req, res) => {
+  try {
+    const pool = req.app.locals.db;
+    const { hours = 24 } = req.query;
+    
+    const usageData = await pool.query(`
+      SELECT * FROM v_usage_analytics 
+      WHERE hour_bucket >= NOW() - INTERVAL '${hours} hours'
+      ORDER BY hour_bucket DESC
+      LIMIT 50
+    `);
+    
+    res.json({
+      success: true,
+      data: usageData.rows
+    });
+  } catch (error) {
+    console.error('Usage details error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch usage details'
+    });
+  }
+});
+
+// Get error analysis
+router.get('/errors', async (req, res) => {
+  try {
+    const pool = req.app.locals.db;
+    const { days = 7 } = req.query;
+    
+    const errorData = await pool.query(`
+      SELECT * FROM v_error_analysis 
+      WHERE last_occurrence >= NOW() - INTERVAL '${days} days'
+      ORDER BY error_count DESC
+      LIMIT 20
+    `);
+    
+    res.json({
+      success: true,
+      data: errorData.rows
+    });
+  } catch (error) {
+    console.error('Error analysis error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch error analysis'
+    });
+  }
+});
+
+// Get query type performance
+router.get('/query-types', async (req, res) => {
+  try {
+    const pool = req.app.locals.db;
+    const { days = 7 } = req.query;
+    
+    const queryTypeData = await pool.query(`
+      SELECT * FROM v_query_type_performance 
+      WHERE query_type IS NOT NULL
+      ORDER BY total_queries DESC
+      LIMIT 20
+    `);
+    
+    res.json({
+      success: true,
+      data: queryTypeData.rows
+    });
+  } catch (error) {
+    console.error('Query type performance error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch query type performance'
+    });
+  }
+});
+
+// Get recent logs
+router.get('/logs', async (req, res) => {
+  try {
+    const pool = req.app.locals.db;
+    const { limit = 50, success } = req.query;
+    
+    let whereClause = '';
+    if (success !== undefined) {
+      whereClause = `WHERE success = ${success === 'true'}`;
+    }
+    
+    const logs = await pool.query(`
+      SELECT 
+        session_id, user_message, success, row_count, 
+        total_execution_time_ms, query_type, error_message,
+        timestamp
+      FROM t_usage_logs 
+      ${whereClause}
+      ORDER BY timestamp DESC 
+      LIMIT ${parseInt(limit)}
+    `);
+    
+    res.json({
+      success: true,
+      data: logs.rows
+    });
+  } catch (error) {
+    console.error('Logs error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch logs'
     });
   }
 });

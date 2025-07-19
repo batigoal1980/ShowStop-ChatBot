@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5001;
 
 // Database connection
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://admin:gHzAsyen7HFpmc6b@34.74.141.9:58832/prod_ad_insights',
+  connectionString: process.env.DATABASE_URL || 'postgresql://admin:gHzAsyen7HFpmc6b@34.74.141.9:58832/dev_ad_insights',
   ssl: {
     rejectUnauthorized: false
   }
@@ -103,7 +103,7 @@ app.locals.db = pool;
 
 const server = app.listen(PORT, () => {
   console.log(`🚀 ShowStop ChatBot server running on port ${PORT}`);
-  console.log(`📊 Connected to database: prod_ad_insights`);
+  console.log(`📊 Connected to database: dev_ad_insights`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health check available at: http://localhost:${PORT}/api/health`);
   console.log(`📁 Static files served from: ${path.join(__dirname, '../client/build')}`);

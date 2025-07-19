@@ -12,6 +12,12 @@ class ChatService {
       ssl: { rejectUnauthorized: false }
     });
     
+    // Separate pool for logging to dev database
+    this.loggingPool = new Pool({
+      connectionString: 'postgresql://admin:gHzAsyen7HFpmc6b@34.74.141.9:58832/dev_ad_insights',
+      ssl: { rejectUnauthorized: false }
+    });
+    
     // Cache schema to avoid repeated queries
     this.schemaCache = null;
     this.schemaCacheTime = null;
@@ -20,16 +26,21 @@ class ChatService {
 
   // Dynamically fetch complete database schema
   async getDatabaseSchema() {
+    const schemaId = Math.random().toString(36).substring(2, 8);
+    const startTime = Date.now();
+    
     try {
       // Check if we have a valid cached schema
       if (this.schemaCache && this.schemaCacheTime && 
           (Date.now() - this.schemaCacheTime) < this.CACHE_DURATION) {
+        console.log(`📋 [${schemaId}] Using cached schema (${Object.keys(this.schemaCache).length} tables)`);
         return this.schemaCache;
       }
 
-      console.log('🔍 Fetching fresh database schema...');
+      console.log(`🔍 [${schemaId}] Fetching fresh database schema...`);
       
       // Get all tables in the database
+      console.log(`📋 [${schemaId}] Querying table list...`);
       const tablesQuery = `
         SELECT table_name 
         FROM information_schema.tables 
@@ -40,8 +51,10 @@ class ChatService {
       
       const tablesResult = await this.pool.query(tablesQuery);
       const tableNames = tablesResult.rows.map(row => row.table_name);
+      console.log(`✅ [${schemaId}] Found ${tableNames.length} tables: ${tableNames.join(', ')}`);
       
       // Get detailed schema for all tables
+      console.log(`📋 [${schemaId}] Fetching detailed column information...`);
       const schemaQuery = `
         SELECT 
           t.table_name,
@@ -62,6 +75,7 @@ class ChatService {
       `;
       
       const schemaResult = await this.pool.query(schemaQuery);
+      console.log(`✅ [${schemaId}] Retrieved ${schemaResult.rows.length} column definitions`);
       
       // Group columns by table
       const schemaByTable = {};
@@ -84,11 +98,22 @@ class ChatService {
       this.schemaCache = schemaByTable;
       this.schemaCacheTime = Date.now();
       
-      console.log(`✅ Schema cached for ${Object.keys(schemaByTable).length} tables`);
+      const schemaTime = Date.now() - startTime;
+      console.log(`✅ [${schemaId}] Schema cached for ${Object.keys(schemaByTable).length} tables in ${schemaTime}ms`);
+      
+      // Log table details
+      Object.keys(schemaByTable).forEach(tableName => {
+        const columnCount = schemaByTable[tableName].length;
+        console.log(`📊 [${schemaId}] Table ${tableName}: ${columnCount} columns`);
+      });
+      
       return schemaByTable;
       
     } catch (error) {
-      console.error('Error fetching schema:', error);
+      const schemaTime = Date.now() - startTime;
+      console.error(`💥 [${schemaId}] Schema fetch FAILED after ${schemaTime}ms`);
+      console.error(`🚨 [${schemaId}] Schema error: ${error.message}`);
+      console.error(`📋 [${schemaId}] Error details:`, error);
       return {};
     }
   }
@@ -524,15 +549,24 @@ Return ONLY the SQL query, no explanations.`;
 
   // Translate natural language to SQL using dynamic schema
   async translateToSQL(userQuestion) {
+    const translationId = Math.random().toString(36).substring(2, 8);
+    const startTime = Date.now();
+    
     try {
-      console.log(`🤖 Translating: "${userQuestion}"`);
+      console.log(`🔄 [${translationId}] Starting SQL translation for: "${userQuestion}"`);
       
       // Get fresh schema
+      console.log(`📋 [${translationId}] Fetching database schema...`);
       const schema = await this.getDatabaseSchema();
+      console.log(`✅ [${translationId}] Schema fetched: ${schema.length} tables available`);
       
       // Generate system prompt based on actual schema
+      console.log(`📝 [${translationId}] Generating system prompt...`);
       const systemPrompt = this.generateSystemPrompt(schema);
+      console.log(`✅ [${translationId}] System prompt generated (${systemPrompt.length} characters)`);
       
+      // Call Anthropic API
+      console.log(`🤖 [${translationId}] Calling Anthropic Claude API...`);
       const response = await this.anthropic.messages.create({
         model: "claude-3-5-sonnet-20241022",
         max_tokens: 1000,
@@ -543,13 +577,23 @@ Return ONLY the SQL query, no explanations.`;
         ]
       });
 
-      const sqlQuery = response.content[0].text.trim();
-      console.log(`📝 Generated SQL: ${sqlQuery}`);
+      const rawSQL = response.content[0].text.trim();
+      console.log(`📝 [${translationId}] Raw SQL generated: ${rawSQL.length} characters`);
       
       // Clean and validate the SQL query
-      return this.cleanSQLQuery(sqlQuery);
+      console.log(`🧹 [${translationId}] Cleaning and validating SQL...`);
+      const cleanedSQL = this.cleanSQLQuery(rawSQL);
+      console.log(`✅ [${translationId}] SQL cleaned and validated`);
+      
+      const translationTime = Date.now() - startTime;
+      console.log(`🎯 [${translationId}] SQL translation COMPLETED in ${translationTime}ms`);
+      
+      return cleanedSQL;
     } catch (error) {
-      console.error('Error translating to SQL:', error);
+      const translationTime = Date.now() - startTime;
+      console.error(`💥 [${translationId}] SQL translation FAILED after ${translationTime}ms`);
+      console.error(`🚨 [${translationId}] Translation error: ${error.message}`);
+      console.error(`📋 [${translationId}] Error details:`, error);
       throw new Error('Failed to translate question to SQL');
     }
   }
@@ -594,25 +638,60 @@ Return ONLY the SQL query, no explanations.`;
 
   // Execute SQL query and format results
   async executeQuery(sqlQuery) {
+    const startTime = Date.now();
+    const queryId = Math.random().toString(36).substring(2, 8);
+    
     try {
-      console.log(`🔍 Executing SQL: ${sqlQuery}`);
-      const result = await this.pool.query(sqlQuery);
+      console.log(`🔍 [${queryId}] Executing SQL query...`);
+      console.log(`📝 [${queryId}] SQL: ${sqlQuery}`);
       
-      console.log(`✅ Query executed successfully: ${result.rowCount} rows returned`);
+      const result = await this.pool.query(sqlQuery);
+      const executionTime = Date.now() - startTime;
+      
+      console.log(`✅ [${queryId}] Query SUCCESS: ${result.rowCount} rows returned in ${executionTime}ms`);
+      console.log(`📊 [${queryId}] Columns: ${result.fields.map(field => field.name).join(', ')}`);
       
       return {
         success: true,
         data: result.rows,
         rowCount: result.rowCount,
         columns: result.fields.map(field => field.name),
-        query: sqlQuery
+        query: sqlQuery,
+        executionTime: executionTime,
+        queryId: queryId
       };
     } catch (error) {
-      console.error('SQL execution error:', error);
+      const executionTime = Date.now() - startTime;
+      console.error(`❌ [${queryId}] Query FAILED after ${executionTime}ms`);
+      console.error(`🚨 [${queryId}] Error: ${error.message}`);
+      console.error(`🔍 [${queryId}] Error Code: ${error.code}`);
+      console.error(`📋 [${queryId}] Error Details:`, {
+        severity: error.severity,
+        code: error.code,
+        detail: error.detail,
+        hint: error.hint,
+        position: error.position,
+        file: error.file,
+        line: error.line,
+        routine: error.routine
+      });
+      
       return {
         success: false,
         error: error.message,
-        query: sqlQuery
+        errorCode: error.code,
+        errorDetails: {
+          severity: error.severity,
+          detail: error.detail,
+          hint: error.hint,
+          position: error.position,
+          file: error.file,
+          line: error.line,
+          routine: error.routine
+        },
+        query: sqlQuery,
+        executionTime: executionTime,
+        queryId: queryId
       };
     }
   }
@@ -734,30 +813,191 @@ If the data contains asset URLs (image or video files), include them in your res
     }
   }
 
-  // Main chat method
-  async processChatMessage(userMessage) {
+  // Log usage data to database
+  async logUsageData(logData) {
     try {
-      console.log(`🤖 Processing chat message: "${userMessage}"`);
+      const query = `
+        INSERT INTO t_usage_logs (
+          session_id, query_id, translation_id, schema_id,
+          user_message, user_agent, ip_address,
+          sql_query, cleaned_sql_query, query_type,
+          total_execution_time_ms, query_execution_time_ms, translation_time_ms, schema_fetch_time_ms,
+          success, row_count, error_message, error_code, error_details,
+          assets_found, system_prompt_length, schema_tables_count, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+      `;
+      
+      const values = [
+        logData.sessionId,
+        logData.queryId,
+        logData.translationId,
+        logData.schemaId,
+        logData.userMessage,
+        logData.userAgent,
+        logData.ipAddress,
+        logData.sqlQuery,
+        logData.cleanedSqlQuery,
+        logData.queryType,
+        logData.totalExecutionTime,
+        logData.queryExecutionTime,
+        logData.translationTime,
+        logData.schemaFetchTime,
+        logData.success,
+        logData.rowCount,
+        logData.errorMessage,
+        logData.errorCode,
+        logData.errorDetails ? JSON.stringify(logData.errorDetails) : null,
+        logData.assetsFound,
+        logData.systemPromptLength,
+        logData.schemaTablesCount,
+        JSON.stringify(logData.metadata || {})
+      ];
+      
+      await this.loggingPool.query(query, values);
+      console.log(`📊 [${logData.sessionId}] Usage logged to dev database`);
+    } catch (error) {
+      console.error(`❌ [${logData.sessionId}] Failed to log usage: ${error.message}`);
+    }
+  }
+
+  // Detect query type from user message
+  detectQueryType(userMessage) {
+    const message = userMessage.toLowerCase();
+    
+    if (message.includes('ctr') || message.includes('click through rate')) {
+      return 'ctr';
+    } else if (message.includes('roas') || message.includes('return on ad spend')) {
+      return 'roas';
+    } else if (message.includes('impression')) {
+      return 'impressions';
+    } else if (message.includes('spend') || message.includes('cost')) {
+      return 'spend';
+    } else if (message.includes('conversion') || message.includes('purchase')) {
+      return 'conversions';
+    } else if (message.includes('video')) {
+      return 'video_analysis';
+    } else if (message.includes('image') || message.includes('creative')) {
+      return 'creative_analysis';
+    } else {
+      return 'general';
+    }
+  }
+
+  // Main chat method
+  async processChatMessage(userMessage, requestInfo = {}) {
+    const sessionId = Math.random().toString(36).substring(2, 8);
+    const startTime = Date.now();
+    let translationTime = 0;
+    let schemaFetchTime = 0;
+    let queryExecutionTime = 0;
+    let translationId = null;
+    let schemaId = null;
+    let queryId = null;
+    
+    try {
+      console.log(`🤖 [${sessionId}] Processing chat message: "${userMessage}"`);
       
       // Step 1: Translate to SQL
+      console.log(`🔄 [${sessionId}] Step 1: Translating natural language to SQL...`);
+      const translationStart = Date.now();
       const sqlQuery = await this.translateToSQL(userMessage);
+      translationTime = Date.now() - translationStart;
+      translationId = Math.random().toString(36).substring(2, 8);
+      console.log(`✅ [${sessionId}] SQL translation completed in ${translationTime}ms`);
       
       // Step 2: Execute query
+      console.log(`🔄 [${sessionId}] Step 2: Executing SQL query...`);
       const queryResult = await this.executeQuery(sqlQuery);
+      queryExecutionTime = queryResult.executionTime || 0;
+      queryId = queryResult.queryId;
       
       if (!queryResult.success) {
+        console.log(`❌ [${sessionId}] Query execution failed: ${queryResult.error}`);
+        
+        // Log the failure
+        this.logUsageData({
+          sessionId,
+          queryId,
+          translationId,
+          schemaId,
+          userMessage,
+          userAgent: requestInfo.userAgent,
+          ipAddress: requestInfo.ipAddress,
+          sqlQuery: sqlQuery,
+          cleanedSqlQuery: sqlQuery,
+          queryType: this.detectQueryType(userMessage),
+          totalExecutionTime: Date.now() - startTime,
+          queryExecutionTime,
+          translationTime,
+          schemaFetchTime,
+          success: false,
+          rowCount: null,
+          errorMessage: queryResult.error,
+          errorCode: queryResult.errorCode,
+          errorDetails: queryResult.errorDetails,
+          assetsFound: 0,
+          systemPromptLength: 0,
+          schemaTablesCount: 0,
+          metadata: { step: 'query_execution' }
+        });
+        
         return {
           success: false,
           error: queryResult.error,
-          message: "I couldn't execute that query. Please try rephrasing your question."
+          errorCode: queryResult.errorCode,
+          errorDetails: queryResult.errorDetails,
+          message: "I couldn't execute that query. Please try rephrasing your question.",
+          sessionId: sessionId,
+          executionTime: Date.now() - startTime
         };
       }
       
-      // Step 3: Extract asset URLs from data with dynamic metrics based on user question
+      console.log(`✅ [${sessionId}] Query execution successful: ${queryResult.rowCount} rows`);
+      
+      // Step 3: Extract asset URLs
+      console.log(`🔄 [${sessionId}] Step 3: Extracting asset URLs...`);
       const assetUrls = this.extractAssetUrls(queryResult.data, userMessage);
+      console.log(`✅ [${sessionId}] Asset extraction completed: ${assetUrls.length} assets found`);
       
       // Step 4: Generate explanation
+      console.log(`🔄 [${sessionId}] Step 4: Generating explanation...`);
       const explanation = await this.explainResults(queryResult, userMessage);
+      console.log(`✅ [${sessionId}] Explanation generated`);
+      
+      const totalTime = Date.now() - startTime;
+      console.log(`🎉 [${sessionId}] Chat processing COMPLETED successfully in ${totalTime}ms`);
+      console.log(`📊 [${sessionId}] Final stats: ${queryResult.rowCount} rows, ${assetUrls.length} assets, ${totalTime}ms total`);
+      
+      // Log the success
+      this.logUsageData({
+        sessionId,
+        queryId,
+        translationId,
+        schemaId,
+        userMessage,
+        userAgent: requestInfo.userAgent,
+        ipAddress: requestInfo.ipAddress,
+        sqlQuery: sqlQuery,
+        cleanedSqlQuery: sqlQuery,
+        queryType: this.detectQueryType(userMessage),
+        totalExecutionTime: totalTime,
+        queryExecutionTime,
+        translationTime,
+        schemaFetchTime,
+        success: true,
+        rowCount: queryResult.rowCount,
+        errorMessage: null,
+        errorCode: null,
+        errorDetails: null,
+        assetsFound: assetUrls.length,
+        systemPromptLength: 0, // We'll get this from schema fetch
+        schemaTablesCount: 0,  // We'll get this from schema fetch
+        metadata: { 
+          step: 'success',
+          columns: queryResult.columns,
+          hasAssets: assetUrls.length > 0
+        }
+      });
       
       return {
         success: true,
@@ -767,14 +1007,51 @@ If the data contains asset URLs (image or video files), include them in your res
         rowCount: queryResult.rowCount,
         columns: queryResult.columns,
         assetUrls: assetUrls,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        sessionId: sessionId,
+        executionTime: totalTime,
+        queryExecutionTime: queryResult.executionTime,
+        queryId: queryResult.queryId
       };
     } catch (error) {
-      console.error('Chat processing error:', error);
+      const totalTime = Date.now() - startTime;
+      console.error(`💥 [${sessionId}] Chat processing FAILED after ${totalTime}ms`);
+      console.error(`🚨 [${sessionId}] Error: ${error.message}`);
+      console.error(`📋 [${sessionId}] Error stack:`, error.stack);
+      
+      // Log the error
+      this.logUsageData({
+        sessionId,
+        queryId,
+        translationId,
+        schemaId,
+        userMessage,
+        userAgent: requestInfo.userAgent,
+        ipAddress: requestInfo.ipAddress,
+        sqlQuery: null,
+        cleanedSqlQuery: null,
+        queryType: this.detectQueryType(userMessage),
+        totalExecutionTime: totalTime,
+        queryExecutionTime,
+        translationTime,
+        schemaFetchTime,
+        success: false,
+        rowCount: null,
+        errorMessage: error.message,
+        errorCode: 'PROCESSING_ERROR',
+        errorDetails: { stack: error.stack },
+        assetsFound: 0,
+        systemPromptLength: 0,
+        schemaTablesCount: 0,
+        metadata: { step: 'processing_error' }
+      });
+      
       return {
         success: false,
         error: error.message,
-        message: "I encountered an error processing your request. Please try again."
+        message: "I encountered an error processing your request. Please try again.",
+        sessionId: sessionId,
+        executionTime: totalTime
       };
     }
   }

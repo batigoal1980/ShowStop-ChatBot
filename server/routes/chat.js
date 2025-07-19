@@ -16,7 +16,13 @@ router.post('/message', async (req, res) => {
 
     console.log(`🤖 Processing chat message: "${message}"`);
     
-    const result = await chatService.processChatMessage(message);
+    // Extract request information for logging
+    const requestInfo = {
+      userAgent: req.get('User-Agent'),
+      ipAddress: req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']
+    };
+    
+    const result = await chatService.processChatMessage(message, requestInfo);
     
     res.json({
       success: true,
