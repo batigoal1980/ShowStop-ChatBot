@@ -264,74 +264,9 @@ JOIN RELATIONSHIPS:
 - t_ad.asset_id = t_ad_video_labelings.raw_asset_id (for video creative features)
 - t_ad.raw_ad_id = t_ad_daily_performance.raw_ad_id (for ad performance data) - IMPORTANT: Aggregate t_ad_daily_performance by raw_ad_id first to avoid double counting
 
-**AD FORMAT COMPARISON EXAMPLES:**
+**ESSENTIAL QUERY PATTERNS:**
 
-**IMAGE AD FORMATS:**
-SELECT 
-    il.f_ad_type,
-    SUM(ad_performance.spend) as total_spend,
-    SUM(ad_performance.impressions) as total_impressions,
-    SUM(ad_performance.clicks) as total_clicks,
-    ROUND((SUM(ad_performance.clicks)::float / NULLIF(SUM(ad_performance.impressions), 0) * 100)::numeric, 2) as ctr
-FROM t_ad_image_labelings il
-JOIN t_ad a ON il.raw_asset_id = a.asset_id
-JOIN (
-    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks
-    FROM t_ad_daily_performance 
-    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-    GROUP BY raw_ad_id
-) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
-GROUP BY il.f_ad_type
-ORDER BY total_spend DESC
-LIMIT 100
-
-**VIDEO AD FORMATS (WITH DISTINCT AD AGGREGATION):**
-SELECT DISTINCT
-    a.raw_ad_id,
-    a.name as ad_name,
-    vl.video_ad_type,
-    ad_performance.spend as total_spend,
-    ad_performance.impressions as total_impressions,
-    ad_performance.clicks as total_clicks,
-    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
-FROM t_ad_video_labelings vl
-JOIN t_ad a ON vl.raw_asset_id = a.asset_id
-JOIN (
-    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks
-    FROM t_ad_daily_performance 
-    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-    GROUP BY raw_ad_id
-) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
-ORDER BY total_spend DESC
-LIMIT 100
-
-**COMBINED AD FORMATS (IMAGE + VIDEO WITH DISTINCT AD AGGREGATION):**
-SELECT DISTINCT
-    a.raw_ad_id,
-    a.name as ad_name,
-    COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
-    CASE 
-        WHEN il.f_ad_type IS NOT NULL THEN 'Image'
-        WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
-    END as media_type,
-    ad_performance.spend as total_spend,
-    ad_performance.impressions as total_impressions,
-    ad_performance.clicks as total_clicks,
-    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
-FROM t_ad a
-LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
-LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-JOIN (
-    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks
-    FROM t_ad_daily_performance 
-    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-    GROUP BY raw_ad_id
-) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
-WHERE (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
-ORDER BY total_spend DESC
-LIMIT 100
-
-**AD FORMAT COMPARISON (AGGREGATED BY FORMAT):**
+**1. AD FORMAT COMPARISON (AGGREGATED BY FORMAT):**
 SELECT 
     ad_format,
     media_type,
@@ -346,7 +281,6 @@ SELECT
 FROM (
     SELECT DISTINCT
         a.raw_ad_id,
-        a.name as ad_name,
         COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
         CASE 
             WHEN il.f_ad_type IS NOT NULL THEN 'Image'
@@ -374,88 +308,43 @@ HAVING SUM(impressions) >= 1000
 ORDER BY total_spend DESC
 LIMIT 100
 
-**WRONG PATTERN FOR AD FORMAT COMPARISON (DO NOT USE - CAUSES DOUBLE COUNTING):**
--- ❌ WRONG: This will double-count ads with multiple video clips
+**2. VIDEO PERFORMANCE ACROSS DIFFERENT AD TYPES:**
 SELECT 
-    COALESCE(il.f_ad_type, vl.video_ad_type) as ad_format,
-    COUNT(DISTINCT a.raw_ad_id) as number_of_ads,
-    SUM(ad_performance.spend) as total_spend
-FROM t_ad a
-LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
-LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-JOIN (
-    SELECT raw_ad_id, SUM(spend) as spend
-    FROM t_ad_daily_performance 
-    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-    GROUP BY raw_ad_id
-) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
-WHERE (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
-GROUP BY COALESCE(il.f_ad_type, vl.video_ad_type)  -- ❌ WRONG: This groups by clips, not ads
+    video_ad_type,
+    COUNT(DISTINCT raw_ad_id) as number_of_ads,
+    SUM(spend) as total_spend,
+    SUM(impressions) as total_impressions,
+    SUM(clicks) as total_clicks,
+    SUM(purchases) as total_purchases,
+    SUM(purchase_value) as total_revenue,
+    ROUND((SUM(clicks)::float / NULLIF(SUM(impressions), 0) * 100)::numeric, 2) as ctr,
+    ROUND((SUM(purchase_value)::float / NULLIF(SUM(spend), 0))::numeric, 2) as roas
+FROM (
+    SELECT DISTINCT
+        a.raw_ad_id,
+        vl.video_ad_type,
+        ad_performance.spend,
+        ad_performance.impressions,
+        ad_performance.clicks,
+        ad_performance.purchases,
+        ad_performance.purchase_value
+    FROM t_ad a
+    JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+    JOIN (
+        SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, 
+               SUM(clicks) as clicks, SUM(purchases) as purchases, SUM(purchase_value) as purchase_value
+        FROM t_ad_daily_performance 
+        WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY raw_ad_id
+    ) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+    WHERE vl.video_ad_type IS NOT NULL
+) distinct_video_ads
+GROUP BY video_ad_type
+HAVING SUM(impressions) >= 1000
 ORDER BY total_spend DESC
+LIMIT 100
 
-**TOP PERFORMING VIDEOS (CORRECT PATTERN - NO DOUBLE COUNTING):**
--- Note: Use LIMIT 50 in subquery to get top 5 after JOIN (10x multiplier to account for ads without video labelings)
-SELECT DISTINCT
-    a.raw_ad_id,
-    a.name as ad_name,
-    vl.url as video_url,
-    vl.video_ad_type,
-    ad_performance.spend as total_spend,
-    ad_performance.impressions as total_impressions,
-    ad_performance.clicks as total_clicks,
-    ad_performance.purchases as total_purchases,
-    ad_performance.purchase_value as total_revenue,
-    ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas,
-    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
-FROM (
-    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks, 
-           SUM(purchases) as purchases, SUM(purchase_value) as purchase_value
-    FROM t_ad_daily_performance 
-    WHERE date >= '2025-07-01' AND date < '2025-08-01'
-    GROUP BY raw_ad_id
-    ORDER BY SUM(purchase_value) DESC
-    LIMIT 20
-) ad_performance
-JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
-JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-ORDER BY ad_performance.purchase_value DESC, a.raw_ad_id
-LIMIT 5
-
-**TOP PERFORMING VIDEOS BY IMPRESSIONS (CORRECT ORDERING):**
--- Note: Use LIMIT 50 in subquery to get top 5 after JOIN (10x multiplier to account for ads without video labelings)
-SELECT DISTINCT
-    a.raw_ad_id,
-    a.name as ad_name,
-    vl.url as video_url,
-    vl.video_ad_type,
-    vl.video_duration,
-    ad_performance.impressions as total_impressions,
-    ad_performance.spend as total_spend,
-    ad_performance.clicks as total_clicks,
-    ad_performance.purchases as total_purchases,
-    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr,
-    ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas
-FROM (
-    SELECT raw_ad_id, 
-           SUM(impressions) as impressions,
-           SUM(spend) as spend,
-           SUM(clicks) as clicks,
-           SUM(purchases) as purchases,
-           SUM(purchase_value) as purchase_value
-    FROM t_ad_daily_performance
-    WHERE date >= '2025-07-01' AND date < '2025-08-01'
-    GROUP BY raw_ad_id
-    ORDER BY SUM(impressions) DESC
-    LIMIT 50
-) ad_performance
-JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
-JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-ORDER BY ad_performance.impressions DESC, a.raw_ad_id
-LIMIT 5
-
-**TOP PERFORMING VIDEOS BY CTR (CORRECT ORDERING):**
--- Note: Use LIMIT 100 in subquery to get top 10 after JOIN (10x multiplier to account for ads without video labelings)
--- IMPORTANT: Order by CTR in subquery, not in final SELECT DISTINCT
+**3. TOP PERFORMING VIDEOS BY CTR:**
 SELECT DISTINCT
     a.raw_ad_id,
     a.name as ad_name,
@@ -487,85 +376,10 @@ JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
 ORDER BY a.raw_ad_id
 LIMIT 10
 
-**WRONG PATTERN (DO NOT USE):**
--- This will FAIL: ORDER BY calculated expression in SELECT DISTINCT
-SELECT DISTINCT
-    a.raw_ad_id,
-    a.name as ad_name,
-    vl.url as video_url,
-    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
-FROM (
-    SELECT raw_ad_id, SUM(impressions) as impressions, SUM(clicks) as clicks
-    FROM t_ad_daily_performance
-    GROUP BY raw_ad_id
-    ORDER BY SUM(impressions) DESC
-    LIMIT 50
-) ad_performance
-JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
-JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-ORDER BY ctr DESC  -- ❌ WRONG: calculated expression not in SELECT list
-LIMIT 10
-
-**CORRECT PATTERN FOR CTR QUERIES:**
--- ✅ CORRECT: Order by CTR in subquery, not in final SELECT DISTINCT
-SELECT DISTINCT
-    a.raw_ad_id,
-    a.name as ad_name,
-    vl.url as video_url,
-    vl.video_ad_type,
-    vl.video_duration,
-    ad_performance.impressions as total_impressions,
-    ad_performance.clicks as total_clicks,
-    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
-FROM (
-    SELECT raw_ad_id, 
-           SUM(impressions) as impressions,
-           SUM(clicks) as clicks
-    FROM t_ad_daily_performance
-    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-    GROUP BY raw_ad_id
-    HAVING SUM(impressions) >= 1000
-    ORDER BY (SUM(clicks)::float / NULLIF(SUM(impressions), 0)) DESC  -- ✅ Order by CTR here
-    LIMIT 100
-) ad_performance
-JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
-JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-ORDER BY a.raw_ad_id  -- ✅ Only order by columns in SELECT list
-LIMIT 10
-
-**TOP PERFORMING VIDEOS BY ROAS (CORRECT ORDERING):**
--- Note: Use LIMIT 50 in subquery to get top 5 after JOIN (10x multiplier to account for ads without video labelings)
--- IMPORTANT: Order by ROAS in subquery, not in final SELECT DISTINCT
-SELECT DISTINCT
-    a.raw_ad_id,
-    a.name as ad_name,
-    vl.url as video_url,
-    vl.video_ad_type,
-    vl.video_duration,
-    ad_performance.spend as total_spend,
-    ad_performance.impressions as total_impressions,
-    ad_performance.clicks as total_clicks,
-    ad_performance.purchases as total_purchases,
-    ad_performance.purchase_value as total_revenue,
-    ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas,
-    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
-FROM (
-    SELECT raw_ad_id, 
-           SUM(spend) as spend,
-           SUM(impressions) as impressions,
-           SUM(clicks) as clicks,
-           SUM(purchases) as purchases,
-           SUM(purchase_value) as purchase_value
-    FROM t_ad_daily_performance
-    WHERE date >= '2025-07-01' AND date < '2025-08-01'
-    GROUP BY raw_ad_id
-    ORDER BY (SUM(purchase_value)::float / NULLIF(SUM(spend), 0)) DESC  -- ✅ Order by ROAS here
-    LIMIT 50
-) ad_performance
-JOIN t_ad a ON a.raw_ad_id = ad_performance.raw_ad_id
-JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-ORDER BY a.raw_ad_id  -- ✅ Only order by columns in SELECT list
-LIMIT 5
+**❌ WRONG PATTERNS (DO NOT USE):**
+-- 1. Direct GROUP BY on creative labelings tables (causes double counting)
+-- 2. ORDER BY calculated expressions in SELECT DISTINCT
+-- 3. Missing subquery with SELECT DISTINCT for format comparisons
 
 IMPORTANT RULES:
 0. **UNIQUE AD RULE**: When querying video/image ads, use SELECT DISTINCT to ensure only one row per unique ad, since multiple video clips can belong to the same ad. This prevents double-counting when the same ad has multiple video clips. For ad format comparisons, use a subquery with SELECT DISTINCT first, then GROUP BY the format.
@@ -585,7 +399,8 @@ IMPORTANT RULES:
 14. **CRITICAL ANTI-DOUBLE-COUNTING RULE**: NEVER use direct JOIN between creative labelings tables (t_ad_video_labelings, t_ad_image_labelings) and t_ad_daily_performance. ALWAYS aggregate t_ad_daily_performance by raw_ad_id first using a subquery.
 15. **AD FORMAT COMPARISON RULE**: When comparing ad formats, NEVER use direct GROUP BY on creative labelings tables. ALWAYS use a subquery with SELECT DISTINCT first to get unique ads, then GROUP BY the format in the outer query.
 16. **CRITICAL AD FORMAT AGGREGATION RULE**: For ad format comparison queries, ALWAYS use this pattern: FROM (SELECT DISTINCT ...) subquery GROUP BY format. NEVER use direct GROUP BY on t_ad_video_labelings or t_ad_image_labelings tables.
-17. **CRITICAL POSTGRESQL SYNTAX RULES**:
+17. **VIDEO AD TYPE COMPARISON RULE**: When comparing video performance across different ad types, use the "VIDEO PERFORMANCE ACROSS DIFFERENT AD TYPES" pattern with subquery containing SELECT DISTINCT, then GROUP BY video_ad_type in outer query.
+18. **CRITICAL POSTGRESQL SYNTAX RULES**:
     - ALWAYS use ROUND(value::numeric, 2) for rounding (NEVER use ROUND(double, int))
     - ALWAYS cast to ::numeric before using ROUND() function
     - Use ::float for division operations
