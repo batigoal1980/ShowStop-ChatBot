@@ -101,95 +101,95 @@ const Chat = () => {
     const questions = [];
     const messageLower = lastMessage.toLowerCase();
     
+    // Analyze the data returned to understand what we're working with
+    const dataAnalysis = analyzeData(data, lastMessage);
+    
     // Check if this is about videos
-    if (messageLower.includes('video') || messageLower.includes('videos')) {
-      questions.push(
-        "Show me top 10 performing videos by impressions",
-        "Which video ads have the highest engagement rate?",
-        "Compare video performance across different ad types"
-      );
+    if (messageLower.includes('video') || messageLower.includes('videos') || dataAnalysis.hasVideos) {
+      if (dataAnalysis.hasVideoTypes) {
+        questions.push("Compare video performance across different ad types");
+      }
+      if (dataAnalysis.hasHighImpressions) {
+        questions.push("Show me videos with highest engagement rate (CTR)");
+      } else {
+        questions.push("Show me top 10 performing videos by impressions");
+      }
+      if (dataAnalysis.hasLowROAS) {
+        questions.push("Show me videos with ROAS above 2.0");
+      } else {
+        questions.push("Which video ads have the highest conversion rate?");
+      }
     }
     
     // Check if this is about images
-    if (messageLower.includes('image') || messageLower.includes('images') || messageLower.includes('photo')) {
-      questions.push(
-        "Show me top 10 performing images by CTR",
-        "Which image ads have the highest conversion rate?",
-        "Compare image performance by ad format"
-      );
-    }
-    
-    // Check if this is about creatives/assets
-    if (messageLower.includes('creative') || messageLower.includes('asset') || messageLower.includes('ad format')) {
-      questions.push(
-        "Show me the best performing creative types",
-        "Which assets have the highest ROAS?",
-        "Compare performance between different creative formats"
-      );
+    if (messageLower.includes('image') || messageLower.includes('images') || messageLower.includes('photo') || dataAnalysis.hasImages) {
+      if (dataAnalysis.hasImageTypes) {
+        questions.push("Compare image performance by ad format");
+      }
+      if (dataAnalysis.hasHighCTR) {
+        questions.push("Show me images with highest conversion rate");
+      } else {
+        questions.push("Show me top 10 performing images by CTR");
+      }
+      questions.push("Which image ads have the highest ROAS?");
     }
     
     // Check if this is about specific metrics
-    if (messageLower.includes('roas') || messageLower.includes('return')) {
-      questions.push(
-        "Show me assets with ROAS above 3.0",
-        "Which creatives have the highest revenue per dollar spent?",
-        "Compare ROAS across different ad types"
-      );
+    if (messageLower.includes('roas') || messageLower.includes('return') || dataAnalysis.metric === 'roas') {
+      if (dataAnalysis.hasLowROAS) {
+        questions.push("Show me assets with ROAS above 3.0");
+      } else {
+        questions.push("Compare ROAS across different ad types");
+      }
+      questions.push("Which creatives have the highest revenue per dollar spent?");
     }
     
-    if (messageLower.includes('ctr') || messageLower.includes('click')) {
-      questions.push(
-        "Show me assets with CTR above 2%",
-        "Which creatives have the highest click-through rates?",
-        "Compare CTR across different platforms"
-      );
+    if (messageLower.includes('ctr') || messageLower.includes('click') || dataAnalysis.metric === 'ctr') {
+      if (dataAnalysis.hasLowCTR) {
+        questions.push("Show me assets with CTR above 2%");
+      } else {
+        questions.push("Compare CTR across different platforms");
+      }
+      questions.push("Which creatives have the highest engagement rates?");
     }
     
-    if (messageLower.includes('impression') || messageLower.includes('reach')) {
-      questions.push(
-        "Show me assets with highest impressions",
-        "Which creatives have the best reach?",
-        "Compare impression performance by ad type"
-      );
+    if (messageLower.includes('impression') || messageLower.includes('reach') || dataAnalysis.metric === 'impressions') {
+      if (dataAnalysis.hasLowImpressions) {
+        questions.push("Show me assets with highest impressions");
+      } else {
+        questions.push("Compare impression performance by ad type");
+      }
+      questions.push("Which creatives have the best reach?");
     }
     
     // Check if this is about specific time periods
     if (messageLower.includes('july') || messageLower.includes('2025')) {
-      questions.push(
-        "Show me top performing videos in August 2025",
-        "Compare July vs August performance",
-        "Show me performance trends for Q3 2025"
-      );
+      questions.push("Show me top performing videos in August 2025");
+      questions.push("Compare July vs August performance");
     }
     
     // Check if this is about campaigns
-    if (messageLower.includes('campaign')) {
-      questions.push(
-        "Show me the best performing campaign creatives",
-        "Which campaigns have the highest creative diversity?",
-        "Compare creative performance within campaigns"
-      );
+    if (messageLower.includes('campaign') || dataAnalysis.hasCampaigns) {
+      questions.push("Show me the best performing campaign creatives");
+      questions.push("Compare creative performance within campaigns");
     }
     
     // Add creative-specific questions based on data context
-    if (data && data.length > 0) {
-      const hasVideos = data.some(row => 
-        Object.values(row).some(val => 
-          typeof val === 'string' && val.includes('/dwnld/video/')
-        )
-      );
-      const hasImages = data.some(row => 
-        Object.values(row).some(val => 
-          typeof val === 'string' && val.match(/\.(jpg|jpeg|png|gif|webp)/i)
-        )
-      );
-      
-      if (hasVideos && !hasImages) {
-        questions.push("Show me top performing images for comparison");
-      }
-      if (hasImages && !hasVideos) {
-        questions.push("Show me top performing videos for comparison");
-      }
+    if (dataAnalysis.hasVideos && !dataAnalysis.hasImages) {
+      questions.push("Show me top performing images for comparison");
+    }
+    if (dataAnalysis.hasImages && !dataAnalysis.hasVideos) {
+      questions.push("Show me top performing videos for comparison");
+    }
+    
+    // Add platform-specific questions if we detect platform data
+    if (dataAnalysis.hasPlatforms) {
+      questions.push("Compare performance across different platforms");
+    }
+    
+    // Add time-based questions if we have date data
+    if (dataAnalysis.hasDates) {
+      questions.push("Show me performance trends over time");
     }
     
     // Add general creative questions if no specific ones were added
@@ -202,6 +202,126 @@ const Chat = () => {
     }
     
     return questions.slice(0, 3); // Return max 3 questions
+  };
+
+  const analyzeData = (data, lastMessage) => {
+    if (!data || data.length === 0) {
+      return {
+        hasVideos: false,
+        hasImages: false,
+        hasVideoTypes: false,
+        hasImageTypes: false,
+        hasCampaigns: false,
+        hasPlatforms: false,
+        hasDates: false,
+        hasHighImpressions: false,
+        hasLowImpressions: false,
+        hasHighCTR: false,
+        hasLowCTR: false,
+        hasHighROAS: false,
+        hasLowROAS: false,
+        metric: null
+      };
+    }
+
+    const analysis = {
+      hasVideos: false,
+      hasImages: false,
+      hasVideoTypes: false,
+      hasImageTypes: false,
+      hasCampaigns: false,
+      hasPlatforms: false,
+      hasDates: false,
+      hasHighImpressions: false,
+      hasLowImpressions: false,
+      hasHighCTR: false,
+      hasLowCTR: false,
+      hasHighROAS: false,
+      hasLowROAS: false,
+      metric: null
+    };
+
+    // Analyze each row
+    data.forEach(row => {
+      Object.entries(row).forEach(([key, value]) => {
+        const keyLower = key.toLowerCase();
+        const valueStr = String(value).toLowerCase();
+
+        // Check for video content
+        if (valueStr.includes('/dwnld/video/') || valueStr.includes('video')) {
+          analysis.hasVideos = true;
+        }
+
+        // Check for image content
+        if (valueStr.match(/\.(jpg|jpeg|png|gif|webp)/i) || valueStr.includes('image')) {
+          analysis.hasImages = true;
+        }
+
+        // Check for video types
+        if (keyLower.includes('video_ad_type') || keyLower.includes('video_type')) {
+          analysis.hasVideoTypes = true;
+        }
+
+        // Check for image types
+        if (keyLower.includes('f_ad_type') || keyLower.includes('image_type')) {
+          analysis.hasImageTypes = true;
+        }
+
+        // Check for campaigns
+        if (keyLower.includes('campaign') || keyLower.includes('ad_name')) {
+          analysis.hasCampaigns = true;
+        }
+
+        // Check for platforms
+        if (keyLower.includes('platform') || keyLower.includes('account')) {
+          analysis.hasPlatforms = true;
+        }
+
+        // Check for dates
+        if (keyLower.includes('date') || keyLower.includes('created')) {
+          analysis.hasDates = true;
+        }
+
+        // Analyze metrics
+        if (keyLower.includes('impression')) {
+          const numValue = parseFloat(value);
+          if (!isNaN(numValue)) {
+            if (numValue > 1000000) analysis.hasHighImpressions = true;
+            if (numValue < 10000) analysis.hasLowImpressions = true;
+          }
+        }
+
+        if (keyLower.includes('ctr')) {
+          const numValue = parseFloat(value);
+          if (!isNaN(numValue)) {
+            if (numValue > 2.0) analysis.hasHighCTR = true;
+            if (numValue < 0.5) analysis.hasLowCTR = true;
+          }
+        }
+
+        if (keyLower.includes('roas')) {
+          const numValue = parseFloat(value);
+          if (!isNaN(numValue)) {
+            if (numValue > 3.0) analysis.hasHighROAS = true;
+            if (numValue < 1.0) analysis.hasLowROAS = true;
+          }
+        }
+      });
+    });
+
+    // Determine the primary metric being analyzed
+    if (lastMessage) {
+      const messageLower = lastMessage.toLowerCase();
+      if (messageLower.includes('roas') || messageLower.includes('return')) {
+        analysis.metric = 'roas';
+      } else if (messageLower.includes('ctr') || messageLower.includes('click')) {
+        analysis.metric = 'ctr';
+      } else if (messageLower.includes('impression') || messageLower.includes('reach')) {
+        analysis.metric = 'impressions';
+      }
+    }
+
+    return analysis;
   };
 
   const formatSQL = (sql) => {
