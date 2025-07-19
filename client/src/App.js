@@ -1,9 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
-import Analytics from './pages/Analytics';
 import Login from './pages/Login';
 import Layout from './components/Layout';
 import { AuthProvider, useAuth } from './contexts/AuthContext';

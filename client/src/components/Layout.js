@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
-  BarChart3, 
   MessageSquare, 
-  Home, 
   Menu, 
   X, 
   LogOut, 

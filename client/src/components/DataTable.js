@@ -70,6 +70,39 @@ const DataTable = ({ data, columns }) => {
     return String(value);
   };
 
+  const getColumnWidth = (column) => {
+    const columnLower = column.toLowerCase();
+    
+    // Fixed widths for specific column types
+    if (columnLower.includes('id') || columnLower.includes('_id')) {
+      return 'w-24'; // 96px
+    }
+    if (columnLower.includes('name') || columnLower.includes('campaign')) {
+      return 'w-48'; // 192px
+    }
+    if (columnLower.includes('url')) {
+      return 'w-64'; // 256px
+    }
+    if (columnLower.includes('spend') || columnLower.includes('revenue') || columnLower.includes('cost')) {
+      return 'w-32'; // 128px
+    }
+    if (columnLower.includes('impression') || columnLower.includes('click') || columnLower.includes('purchase')) {
+      return 'w-28'; // 112px
+    }
+    if (columnLower.includes('ctr') || columnLower.includes('cvr') || columnLower.includes('roas') || columnLower.includes('cpa') || columnLower.includes('cpc')) {
+      return 'w-24'; // 96px
+    }
+    if (columnLower.includes('date')) {
+      return 'w-32'; // 128px
+    }
+    if (columnLower.includes('type') || columnLower.includes('format')) {
+      return 'w-32'; // 128px
+    }
+    
+    // Default width for other columns
+    return 'w-40'; // 160px
+  };
+
   const exportToCSV = () => {
     const csvContent = [
       columns.join(','),
@@ -132,10 +165,10 @@ const DataTable = ({ data, columns }) => {
                 <th
                   key={column}
                   onClick={() => requestSort(column)}
-                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                  className={`${getColumnWidth(column)} px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors`}
                 >
                   <div className="flex items-center space-x-1">
-                    <span>{column.replace(/_/g, ' ')}</span>
+                    <span className="truncate">{column.replace(/_/g, ' ')}</span>
                     {getSortIcon(column)}
                   </div>
                 </th>
@@ -148,9 +181,11 @@ const DataTable = ({ data, columns }) => {
                 {columns.map((column) => (
                   <td
                     key={column}
-                    className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"
+                    className={`${getColumnWidth(column)} px-6 py-4 text-sm text-gray-900`}
                   >
-                    {formatValue(row[column])}
+                    <div className="truncate" title={formatValue(row[column])}>
+                      {formatValue(row[column])}
+                    </div>
                   </td>
                 ))}
               </tr>

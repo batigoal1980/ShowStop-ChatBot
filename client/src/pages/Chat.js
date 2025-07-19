@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, Code, BarChart3, Sparkles, Loader2 } from 'lucide-react';
+import { Send, Bot, User, Code, BarChart3, Loader2, ChevronRight } from 'lucide-react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import DataTable from '../components/DataTable';
-import Chart from '../components/Chart';
+import AssetGrid from '../components/AssetGrid';
 
 const Chat = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState([]);
+  const [followUpQuestions, setFollowUpQuestions] = useState([]);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -20,20 +20,9 @@ const Chat = () => {
     scrollToBottom();
   }, [messages]);
 
-  useEffect(() => {
-    loadSuggestions();
-  }, []);
 
-  const loadSuggestions = async () => {
-    try {
-      const response = await axios.get('/api/chat/suggestions');
-      if (response.data.success) {
-        setSuggestions(response.data.suggestions);
-      }
-    } catch (error) {
-      console.error('Failed to load suggestions:', error);
-    }
-  };
+
+
 
   const sendMessage = async (messageText) => {
     if (!messageText.trim()) return;
@@ -47,6 +36,7 @@ const Chat = () => {
 
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setFollowUpQuestions([]); // Clear previous follow-up questions
     setLoading(true);
 
     try {
@@ -63,10 +53,16 @@ const Chat = () => {
           sqlQuery: response.data.sqlQuery,
           columns: response.data.columns,
           rowCount: response.data.rowCount,
+          assetUrls: response.data.assetUrls || [],
           timestamp: new Date().toISOString()
         };
 
         setMessages(prev => [...prev, botMessage]);
+        
+        // Generate follow-up questions based on the user's message and conversation context
+        const followUps = generateFollowUpQuestions(messageText, response.data.data, messages);
+        setFollowUpQuestions(followUps);
+        
         toast.success('Query executed successfully!');
       } else {
         const errorMessage = {
@@ -101,8 +97,117 @@ const Chat = () => {
     sendMessage(input);
   };
 
-  const handleSuggestionClick = (suggestion) => {
-    sendMessage(suggestion);
+  const generateFollowUpQuestions = (lastMessage, data, allMessages) => {
+    const questions = [];
+    const messageLower = lastMessage.toLowerCase();
+    
+    // Extract context from the conversation
+    const conversationContext = allMessages
+      .filter(msg => msg.type === 'user')
+      .map(msg => msg.content.toLowerCase())
+      .join(' ');
+    
+    // Check if this is about videos
+    if (messageLower.includes('video') || messageLower.includes('videos')) {
+      questions.push(
+        "Show me top 10 performing videos by impressions",
+        "Which video ads have the highest engagement rate?",
+        "Compare video performance across different ad types"
+      );
+    }
+    
+    // Check if this is about images
+    if (messageLower.includes('image') || messageLower.includes('images') || messageLower.includes('photo')) {
+      questions.push(
+        "Show me top 10 performing images by CTR",
+        "Which image ads have the highest conversion rate?",
+        "Compare image performance by ad format"
+      );
+    }
+    
+    // Check if this is about creatives/assets
+    if (messageLower.includes('creative') || messageLower.includes('asset') || messageLower.includes('ad format')) {
+      questions.push(
+        "Show me the best performing creative types",
+        "Which assets have the highest ROAS?",
+        "Compare performance between different creative formats"
+      );
+    }
+    
+    // Check if this is about specific metrics
+    if (messageLower.includes('roas') || messageLower.includes('return')) {
+      questions.push(
+        "Show me assets with ROAS above 3.0",
+        "Which creatives have the highest revenue per dollar spent?",
+        "Compare ROAS across different ad types"
+      );
+    }
+    
+    if (messageLower.includes('ctr') || messageLower.includes('click')) {
+      questions.push(
+        "Show me assets with CTR above 2%",
+        "Which creatives have the highest click-through rates?",
+        "Compare CTR across different platforms"
+      );
+    }
+    
+    if (messageLower.includes('impression') || messageLower.includes('reach')) {
+      questions.push(
+        "Show me assets with highest impressions",
+        "Which creatives have the best reach?",
+        "Compare impression performance by ad type"
+      );
+    }
+    
+    // Check if this is about specific time periods
+    if (messageLower.includes('july') || messageLower.includes('2025')) {
+      questions.push(
+        "Show me top performing videos in August 2025",
+        "Compare July vs August performance",
+        "Show me performance trends for Q3 2025"
+      );
+    }
+    
+    // Check if this is about campaigns
+    if (messageLower.includes('campaign')) {
+      questions.push(
+        "Show me the best performing campaign creatives",
+        "Which campaigns have the highest creative diversity?",
+        "Compare creative performance within campaigns"
+      );
+    }
+    
+    // Add creative-specific questions based on data context
+    if (data && data.length > 0) {
+      const hasVideos = data.some(row => 
+        Object.values(row).some(val => 
+          typeof val === 'string' && val.includes('/dwnld/video/')
+        )
+      );
+      const hasImages = data.some(row => 
+        Object.values(row).some(val => 
+          typeof val === 'string' && val.match(/\.(jpg|jpeg|png|gif|webp)/i)
+        )
+      );
+      
+      if (hasVideos && !hasImages) {
+        questions.push("Show me top performing images for comparison");
+      }
+      if (hasImages && !hasVideos) {
+        questions.push("Show me top performing videos for comparison");
+      }
+    }
+    
+    // Add general creative questions if no specific ones were added
+    if (questions.length === 0) {
+      questions.push(
+        "Show me top performing video ads",
+        "Show me top performing image ads",
+        "Compare creative performance across platforms"
+      );
+    }
+    
+    return questions.slice(0, 3); // Return max 3 questions
   };
 
   const formatSQL = (sql) => {
@@ -115,6 +220,10 @@ const Chat = () => {
       .replace(/LIMIT/gi, '\nLIMIT')
       .replace(/JOIN/gi, '\nJOIN');
   };
+
+
+
+
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -131,27 +240,44 @@ const Chat = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         {/* Chat Interface */}
-        <div className="lg:col-span-2">
+        <div className="w-full">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-[600px] flex flex-col">
             {/* Chat Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+              
               {messages.length === 0 && (
                 <div className="text-center py-8">
                   <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-gray-900 mb-2">Welcome to ShowStop ChatBot!</h3>
                   <p className="text-gray-600 mb-4">Ask me anything about your marketing data:</p>
                   <div className="grid grid-cols-1 gap-2 max-w-md mx-auto">
-                    {suggestions.slice(0, 4).map((suggestion, index) => (
-                      <button
-                        key={index}
-                        onClick={() => handleSuggestionClick(suggestion)}
-                        className="text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm text-gray-700 transition-colors"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
+                    <button
+                      onClick={() => sendMessage("Show me top performing campaigns this month")}
+                      className="text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm text-gray-700 transition-colors"
+                    >
+                      Show me top performing campaigns this month
+                    </button>
+                    <button
+                      onClick={() => sendMessage("What's our total spend across all platforms?")}
+                      className="text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm text-gray-700 transition-colors"
+                    >
+                      What's our total spend across all platforms?
+                    </button>
+                    <button
+                      onClick={() => sendMessage("Compare performance between different ad formats")}
+                      className="text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm text-gray-700 transition-colors"
+                    >
+                      Compare performance between different ad formats
+                    </button>
+                    <button
+                      onClick={() => sendMessage("Show me top 5 performing videos (highest ROAS) in July 2025")}
+                      className="text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm text-gray-700 transition-colors"
+                    >
+                      Show me top 5 performing videos (highest ROAS) in July 2025
+                    </button>
                   </div>
                 </div>
               )}
@@ -203,6 +329,14 @@ const Chat = () => {
                             <DataTable data={message.data} columns={message.columns} />
                           </div>
                         )}
+
+                        {/* Asset Grid */}
+                        {message.assetUrls && message.assetUrls.length > 0 && (
+                          <AssetGrid 
+                            assets={message.assetUrls}
+                            title="Ad Assets with Performance"
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -243,38 +377,27 @@ const Chat = () => {
                   <span>Send</span>
                 </button>
               </form>
-            </div>
-          </div>
-        </div>
-
-        {/* Suggestions Sidebar */}
-        <div className="lg:col-span-1">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center space-x-2 mb-4">
-              <Sparkles className="h-5 w-5 text-blue-600" />
-              <h3 className="text-lg font-medium text-gray-900">Quick Questions</h3>
-            </div>
-            
-            <div className="space-y-3">
-              {suggestions.map((suggestion, index) => (
-                <button
-                  key={index}
-                  onClick={() => handleSuggestionClick(suggestion)}
-                  className="w-full text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm text-gray-700 transition-colors border border-gray-200"
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Example Queries:</h4>
-              <div className="space-y-2 text-xs text-gray-600">
-                <p>• "Show me top performing campaigns"</p>
-                <p>• "Compare Meta vs TikTok performance"</p>
-                <p>• "What's our ROAS trend?"</p>
-                <p>• "Which ads have highest CTR?"</p>
-              </div>
+              
+              {/* Follow-up Questions */}
+              {followUpQuestions.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <div className="flex items-center space-x-2 mb-3">
+                    <ChevronRight className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-medium text-gray-700">Follow-up questions:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {followUpQuestions.map((question, index) => (
+                      <button
+                        key={index}
+                        onClick={() => sendMessage(question)}
+                        className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-full text-xs font-medium transition-colors border border-blue-200"
+                      >
+                        {question}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

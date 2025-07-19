@@ -151,6 +151,11 @@ class ChatService {
 
     return `You are an expert SQL query generator for a marketing analytics database. Convert natural language questions into accurate PostgreSQL queries.
 
+🚨 **CRITICAL ANTI-DOUBLE-COUNTING RULE** 🚨
+NEVER use direct JOIN between t_ad_video_labelings/t_ad_image_labelings and t_ad_daily_performance. 
+ALWAYS use subquery to aggregate t_ad_daily_performance by raw_ad_id first, then join with creative labelings tables.
+This prevents double counting when multiple video clips belong to the same ad.
+
 ${schemaText}
 
 STEP-BY-STEP QUERY GENERATION PROCESS:
@@ -209,14 +214,14 @@ CRITICAL TABLE USAGE RULES:
    - Image formats: Use t_ad_image_labelings.f_ad_type
    - Video formats: Use t_ad_video_labelings.video_ad_type
    - Combined: Use both tables with LEFT JOINs
-6. For image creative features: JOIN t_ad (asset_id) with t_ad_image_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id). Use f_xxx columns from t_ad_image_labelings.
-7. For video creative features: JOIN t_ad (asset_id) with t_ad_video_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id). Use cf_xxx columns from t_ad_video_labelings.
+6. For image creative features: JOIN t_ad (asset_id) with t_ad_image_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with aggregated t_ad_daily_performance (raw_ad_id). Use f_xxx columns from t_ad_image_labelings. IMPORTANT: Aggregate performance data by raw_ad_id first to avoid double counting. Use DISTINCT ON (raw_ad_id) to ensure unique ads.
+7. For video creative features: JOIN t_ad (asset_id) with t_ad_video_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with aggregated t_ad_daily_performance (raw_ad_id). Use cf_xxx columns from t_ad_video_labelings. IMPORTANT: Aggregate performance data by raw_ad_id first to avoid double counting since multiple video clips can belong to the same ad. Use DISTINCT ON (raw_ad_id) to ensure unique ads.
 
 QUERY PATTERNS:
 - Performance queries: SELECT FROM t_ad_campaign_daily_performance WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
 - Campaign info + performance: JOIN t_ad_campaign ON raw_campaign_id
-- Image creative analysis: JOIN t_ad (asset_id) with t_ad_image_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id)
-- Video creative analysis: JOIN t_ad (asset_id) with t_ad_video_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with t_ad_daily_performance (raw_ad_id)
+- Image creative analysis: JOIN t_ad (asset_id) with t_ad_image_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with aggregated t_ad_daily_performance (raw_ad_id) - aggregate by raw_ad_id first
+- Video creative analysis: JOIN t_ad (asset_id) with t_ad_video_labelings (raw_asset_id), then JOIN t_ad (raw_ad_id) with aggregated t_ad_daily_performance (raw_ad_id) - aggregate by raw_ad_id first to avoid double counting
 - Image ad format analysis: Use t_ad_image_labelings.f_ad_type
 - Video ad format analysis: Use t_ad_video_labelings.video_ad_type
 - Combined ad format analysis: Use LEFT JOINs with both tables and COALESCE
@@ -227,21 +232,25 @@ JOIN RELATIONSHIPS:
 - t_ad_campaign_daily_performance.raw_campaign_id = t_ad_campaign.raw_campaign_id
 - t_ad.asset_id = t_ad_image_labelings.raw_asset_id (for image creative features)
 - t_ad.asset_id = t_ad_video_labelings.raw_asset_id (for video creative features)
-- t_ad.raw_ad_id = t_ad_daily_performance.raw_ad_id (for ad performance data)
+- t_ad.raw_ad_id = t_ad_daily_performance.raw_ad_id (for ad performance data) - IMPORTANT: Aggregate t_ad_daily_performance by raw_ad_id first to avoid double counting
 
 **AD FORMAT COMPARISON EXAMPLES:**
 
 **IMAGE AD FORMATS:**
 SELECT 
     il.f_ad_type,
-    SUM(dp.spend) as total_spend,
-    SUM(dp.impressions) as total_impressions,
-    SUM(dp.clicks) as total_clicks,
-    ROUND((SUM(dp.clicks)::float / NULLIF(SUM(dp.impressions), 0) * 100)::numeric, 2) as ctr
+    SUM(ad_performance.spend) as total_spend,
+    SUM(ad_performance.impressions) as total_impressions,
+    SUM(ad_performance.clicks) as total_clicks,
+    ROUND((SUM(ad_performance.clicks)::float / NULLIF(SUM(ad_performance.impressions), 0) * 100)::numeric, 2) as ctr
 FROM t_ad_image_labelings il
 JOIN t_ad a ON il.raw_asset_id = a.asset_id
-JOIN t_ad_daily_performance dp ON a.raw_ad_id = dp.raw_ad_id
-WHERE dp.date >= CURRENT_DATE - INTERVAL '30 days'
+JOIN (
+    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks
+    FROM t_ad_daily_performance 
+    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    GROUP BY raw_ad_id
+) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
 GROUP BY il.f_ad_type
 ORDER BY total_spend DESC
 LIMIT 100
@@ -249,14 +258,18 @@ LIMIT 100
 **VIDEO AD FORMATS:**
 SELECT 
     vl.video_ad_type,
-    SUM(dp.spend) as total_spend,
-    SUM(dp.impressions) as total_impressions,
-    SUM(dp.clicks) as total_clicks,
-    ROUND((SUM(dp.clicks)::float / NULLIF(SUM(dp.impressions), 0) * 100)::numeric, 2) as ctr
+    SUM(ad_performance.spend) as total_spend,
+    SUM(ad_performance.impressions) as total_impressions,
+    SUM(ad_performance.clicks) as total_clicks,
+    ROUND((SUM(ad_performance.clicks)::float / NULLIF(SUM(ad_performance.impressions), 0) * 100)::numeric, 2) as ctr
 FROM t_ad_video_labelings vl
 JOIN t_ad a ON vl.raw_asset_id = a.asset_id
-JOIN t_ad_daily_performance dp ON a.raw_ad_id = dp.raw_ad_id
-WHERE dp.date >= CURRENT_DATE - INTERVAL '30 days'
+JOIN (
+    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks
+    FROM t_ad_daily_performance 
+    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    GROUP BY raw_ad_id
+) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
 GROUP BY vl.video_ad_type
 ORDER BY total_spend DESC
 LIMIT 100
@@ -268,16 +281,20 @@ SELECT
         WHEN il.f_ad_type IS NOT NULL THEN 'Image'
         WHEN vl.video_ad_type IS NOT NULL THEN 'Video'
     END as media_type,
-    SUM(dp.spend) as total_spend,
-    SUM(dp.impressions) as total_impressions,
-    SUM(dp.clicks) as total_clicks,
-    ROUND((SUM(dp.clicks)::float / NULLIF(SUM(dp.impressions), 0) * 100)::numeric, 2) as ctr
+    SUM(ad_performance.spend) as total_spend,
+    SUM(ad_performance.impressions) as total_impressions,
+    SUM(ad_performance.clicks) as total_clicks,
+    ROUND((SUM(ad_performance.clicks)::float / NULLIF(SUM(ad_performance.impressions), 0) * 100)::numeric, 2) as ctr
 FROM t_ad a
 LEFT JOIN t_ad_image_labelings il ON il.raw_asset_id = a.asset_id
 LEFT JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
-JOIN t_ad_daily_performance dp ON a.raw_ad_id = dp.raw_ad_id
-WHERE dp.date >= CURRENT_DATE - INTERVAL '30 days'
-    AND (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
+JOIN (
+    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks
+    FROM t_ad_daily_performance 
+    WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+    GROUP BY raw_ad_id
+) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+WHERE (il.f_ad_type IS NOT NULL OR vl.video_ad_type IS NOT NULL)
 GROUP BY COALESCE(il.f_ad_type, vl.video_ad_type), 
          CASE 
              WHEN il.f_ad_type IS NOT NULL THEN 'Image'
@@ -285,6 +302,32 @@ GROUP BY COALESCE(il.f_ad_type, vl.video_ad_type),
          END
 ORDER BY total_spend DESC
 LIMIT 100
+
+**TOP PERFORMING VIDEOS (CORRECT PATTERN - NO DOUBLE COUNTING):**
+SELECT DISTINCT ON (a.raw_ad_id)
+    a.raw_ad_id,
+    a.name as ad_name,
+    vl.url as video_url,
+    vl.video_ad_type,
+    ad_performance.spend as total_spend,
+    ad_performance.impressions as total_impressions,
+    ad_performance.clicks as total_clicks,
+    ad_performance.purchases as total_purchases,
+    ad_performance.purchase_value as total_revenue,
+    ROUND((ad_performance.purchase_value::float / NULLIF(ad_performance.spend, 0))::numeric, 2) as roas,
+    ROUND((ad_performance.clicks::float / NULLIF(ad_performance.impressions, 0) * 100)::numeric, 2) as ctr
+FROM t_ad a
+JOIN (
+    SELECT raw_ad_id, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks, 
+           SUM(purchases) as purchases, SUM(purchase_value) as purchase_value
+    FROM t_ad_daily_performance 
+    WHERE date >= '2025-07-01' AND date < '2025-08-01'
+    GROUP BY raw_ad_id
+) ad_performance ON a.raw_ad_id = ad_performance.raw_ad_id
+JOIN t_ad_video_labelings vl ON vl.raw_asset_id = a.asset_id
+WHERE ad_performance.spend > 0
+ORDER BY a.raw_ad_id, ad_performance.purchase_value DESC
+LIMIT 5
 
 IMPORTANT RULES:
 1. **ALWAYS SCAN SCHEMA FIRST** - Check which columns exist in which tables before writing queries
@@ -300,7 +343,9 @@ IMPORTANT RULES:
 11. Image creative features: Use f_xxx columns from t_ad_image_labelings (e.g., f_bright_colors, f_dominant_color, f_ad_type)
 12. Video creative features: Use cf_xxx columns from t_ad_video_labelings (e.g., cf_bright_colors, cf_dominant_color)
 13. Ad format analysis: Use t_ad_image_labelings.f_ad_type for comparing different ad formats (NOT t_ad.f_ad_type)
-14. **CRITICAL POSTGRESQL SYNTAX RULES**:
+14. **CRITICAL ANTI-DOUBLE-COUNTING RULE**: NEVER use direct JOIN between creative labelings tables (t_ad_video_labelings, t_ad_image_labelings) and t_ad_daily_performance. ALWAYS aggregate t_ad_daily_performance by raw_ad_id first using a subquery.
+15. **UNIQUE AD RULE**: When querying video/image ads, use DISTINCT ON (raw_ad_id) to ensure only one row per unique ad, since multiple video clips can belong to the same ad.
+15. **CRITICAL POSTGRESQL SYNTAX RULES**:
     - ALWAYS use ROUND(value::numeric, 2) for rounding (NEVER use ROUND(double, int))
     - ALWAYS cast to ::numeric before using ROUND() function
     - Use ::float for division operations
@@ -413,6 +458,92 @@ Return ONLY the SQL query, no explanations.`;
     }
   }
 
+  // Extract asset URLs from data with dynamic metadata based on user question
+  extractAssetUrls(data, userQuestion = '') {
+    const assetUrls = [];
+    
+    if (!data || !Array.isArray(data)) return assetUrls;
+    
+    // Determine which metrics to include based on the user's question
+    const questionLower = userQuestion.toLowerCase();
+    const includeMetrics = {
+      spend: questionLower.includes('spend') || questionLower.includes('cost') || questionLower.includes('roas'),
+      impressions: questionLower.includes('impression') || questionLower.includes('reach') || questionLower.includes('exposure'),
+      clicks: questionLower.includes('click') || questionLower.includes('ctr') || questionLower.includes('engagement'),
+      purchases: questionLower.includes('purchase') || questionLower.includes('conversion') || questionLower.includes('revenue'),
+      revenue: questionLower.includes('revenue') || questionLower.includes('roas') || questionLower.includes('return'),
+      roas: questionLower.includes('roas') || questionLower.includes('return'),
+      ctr: questionLower.includes('ctr') || questionLower.includes('click'),
+      cpa: questionLower.includes('cpa') || questionLower.includes('acquisition'),
+      cpm: questionLower.includes('cpm') || questionLower.includes('cost per thousand'),
+      cvr: questionLower.includes('cvr') || questionLower.includes('conversion rate')
+    };
+    
+    // If no specific metrics mentioned, include common ones
+    const hasSpecificMetrics = Object.values(includeMetrics).some(Boolean);
+    if (!hasSpecificMetrics) {
+      includeMetrics.spend = true;
+      includeMetrics.impressions = true;
+      includeMetrics.clicks = true;
+      includeMetrics.ctr = true;
+      includeMetrics.roas = true;
+    }
+    
+    data.forEach((row, index) => {
+      Object.entries(row).forEach(([key, value]) => {
+        if (typeof value === 'string' && value.match(/https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp|svg|mp4|mov|avi|webm|mkv)/i)) {
+          // Extract dynamic metrics from the same row based on user question
+          const metrics = {};
+          
+          if (includeMetrics.spend) {
+            metrics.spend = row.spend || row.total_spend;
+          }
+          if (includeMetrics.impressions) {
+            metrics.impressions = row.impressions || row.total_impressions;
+          }
+          if (includeMetrics.clicks) {
+            metrics.clicks = row.clicks || row.total_clicks;
+          }
+          if (includeMetrics.purchases) {
+            metrics.purchases = row.purchases || row.total_purchases;
+          }
+          if (includeMetrics.revenue) {
+            metrics.revenue = row.purchase_value || row.total_revenue || row.revenue;
+          }
+          if (includeMetrics.roas) {
+            metrics.roas = row.roas;
+          }
+          if (includeMetrics.ctr) {
+            metrics.ctr = row.ctr;
+          }
+          if (includeMetrics.cpa) {
+            metrics.cpa = row.cpa;
+          }
+          if (includeMetrics.cpm) {
+            metrics.cpm = row.cpm;
+          }
+          if (includeMetrics.cvr) {
+            metrics.cvr = row.cvr;
+          }
+          
+          // Always include campaign name if available
+          if (row.campaign_name || row.ad_name || row.ad_format || row.media_type) {
+            metrics.campaign_name = row.campaign_name || row.ad_name || row.ad_format || row.media_type;
+          }
+          
+          assetUrls.push({
+            url: value,
+            title: `Asset ${index + 1}`,
+            metrics: metrics,
+            rowIndex: index
+          });
+        }
+      });
+    });
+    
+    return assetUrls;
+  }
+
   // Generate natural language explanation of results
   async explainResults(data, originalQuestion) {
     try {
@@ -424,7 +555,9 @@ Columns: ${data.columns.join(', ')}
 
 First few rows: ${JSON.stringify(data.data.slice(0, 3))}
 
-Provide a 2-3 sentence explanation of what this data shows in business terms. Focus on key insights and trends.`;
+Provide a 2-3 sentence explanation of what this data shows in business terms. Focus on key insights and trends.
+
+If the data contains asset URLs (image or video files), include them in your response so they can be displayed. Format them as clickable links or mention them naturally in the context.`;
 
       const response = await this.anthropic.messages.create({
         model: "claude-3-5-sonnet-20241022",
@@ -461,7 +594,10 @@ Provide a 2-3 sentence explanation of what this data shows in business terms. Fo
         };
       }
       
-      // Step 3: Generate explanation
+      // Step 3: Extract asset URLs from data with dynamic metrics based on user question
+      const assetUrls = this.extractAssetUrls(queryResult.data, userMessage);
+      
+      // Step 4: Generate explanation
       const explanation = await this.explainResults(queryResult, userMessage);
       
       return {
@@ -470,7 +606,9 @@ Provide a 2-3 sentence explanation of what this data shows in business terms. Fo
         explanation: explanation,
         sqlQuery: sqlQuery,
         rowCount: queryResult.rowCount,
-        columns: queryResult.columns
+        columns: queryResult.columns,
+        assetUrls: assetUrls,
+        timestamp: new Date().toISOString()
       };
     } catch (error) {
       console.error('Chat processing error:', error);
@@ -536,7 +674,8 @@ Provide a 2-3 sentence explanation of what this data shows in business terms. Fo
         "Which ads are generating the most impressions?",
         "Show me platform performance comparison",
         "What's our return on ad spend (ROAS)?",
-        "Which campaigns are underperforming?"
+        "Which campaigns are underperforming?",
+        "Show me top 5 performing videos (highest ROAS) in July 2025"
       ];
       
       return suggestions;
